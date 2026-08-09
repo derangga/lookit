@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var watcher: ConfigWatcher?
     private var connection: OBSConnection?
     private var connectionState: Connection = .disconnected(.notStarted)
+    private var obsVersion: String?
     private var zoom = 1.0
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -36,10 +37,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func connect() {
         let connection = OBSConnection { [weak self] state in
             self?.connectionState = state
+            self?.obsVersion = nil
+            // The only window onto a menubar app run from a terminal. One line
+            // per transition, not a log framework.
+            FileHandle.standardError.write(Data("lookit: \(state.message)\n".utf8))
             self?.refreshMenu()
+            if state.isUsable { self?.readVersion() }
         }
         connection.start(config.obs)
         self.connection = connection
+    }
+
+    /// The first real round-trip. Target resolution is the next bead; until then
+    /// this is what proves op 6 out and op 7 back actually correlate.
+    private func readVersion() {
+        Task { [weak self] in
+            guard let connection = self?.connection else { return }
+            let version = try? await connection.call("GetVersion", NoBody(), as: ObsVersion.self)
+            self?.obsVersion = version?.obsVersion
+            FileHandle.standardError.write(Data("lookit: OBS \(version?.obsVersion ?? "?")\n".utf8))
+            self?.refreshMenu()
+        }
     }
 
     // MARK: - Config
@@ -168,7 +186,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()
 
-        menu.addItem(withTitle: connectionState.message, action: nil, keyEquivalent: "")
+        let title = obsVersion.map { "Connected to OBS \($0)" } ?? connectionState.message
+        menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
         menu.item(at: 0)?.isEnabled = false
 
         if !warnings.isEmpty {

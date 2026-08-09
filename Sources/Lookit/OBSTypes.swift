@@ -116,6 +116,10 @@ public struct CurrentSceneResponse: Decodable, Sendable {
     }
 }
 
+public struct ObsVersion: Decodable, Sendable {
+    public let obsVersion: String
+}
+
 public struct SceneItemTransformResponse: Decodable, Sendable {
     public let sceneItemTransform: Transform
 }

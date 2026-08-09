@@ -21,6 +21,10 @@ public final class OBSConnection {
     private var socket: URLSessionWebSocketTask?
     private var loop: Task<Void, Never>?
 
+    /// Callers suspended on an op 7, keyed by the requestId they are waiting for.
+    private var pending: [String: CheckedContinuation<Result<Data, ObsError>, Never>] = [:]
+    private var nextRequestId = 0
+
     public init(onState: @escaping (Connection) -> Void) {
         self.onState = onState
     }
@@ -50,17 +54,21 @@ public final class OBSConnection {
         var attempt = 0
 
         while !Task.isCancelled {
-            let reason: DisconnectReason
+            let failure: ObsError
             do {
                 try await connectOnce(settings)
                 // Identify succeeded at least once, so the next outage starts its
                 // backoff from scratch rather than inheriting a long delay.
                 attempt = 0
-                reason = .dropped("connection closed")
+                failure = .dropped("connection closed")
             } catch {
-                reason = DisconnectReason(error)
+                failure = error
             }
 
+            let reason = DisconnectReason(failure)
+            // Before anything else: nobody is left to answer an in-flight
+            // request, and a caller suspended on one would wait forever.
+            failPending(failure)
             close()
             guard !Task.isCancelled else { return }
             state = .disconnected(reason)
@@ -103,13 +111,75 @@ public final class OBSConnection {
         )
     }
 
-    /// Hold the socket open. Payloads are ignored here — correlating responses
-    /// and surfacing events are their own beads; what this does today is notice
-    /// the moment the connection dies.
+    /// Hold the socket open, handing each frame to whoever is waiting for it.
     private func pump(_ socket: URLSessionWebSocketTask) async throws(ObsError) {
         while !Task.isCancelled {
-            _ = try await receive(on: socket)
+            dispatch(try await receive(on: socket))
         }
+    }
+
+    private func dispatch(_ data: Data) {
+        // An op 7 for an id nobody is waiting on is dropped on purpose: the
+        // caller was cancelled, and that is not an error worth killing the
+        // socket over. op 5 events are their own bead.
+        guard let id = responseId(in: data), let waiter = pending.removeValue(forKey: id) else {
+            return
+        }
+        waiter.resume(returning: .success(data))
+    }
+
+    // MARK: - Requests
+
+    /// Send a request and wait for its response, discarding the response body.
+    public func call(_ requestType: String, _ body: some Encodable) async throws(ObsError) {
+        _ = try await perform(requestType, body)
+    }
+
+    /// Send a request and wait for its response, decoding `responseData`.
+    public func call<D: Decodable>(
+        _ requestType: String, _ body: some Encodable, as: D.Type
+    ) async throws(ObsError) -> D {
+        let data = try await perform(requestType, body)
+        guard
+            let response = try? JSONDecoder().decode(Payload<ResponseBody<D>>.self, from: data),
+            let decoded = response.d.responseData
+        else {
+            throw .dropped("could not read the \(requestType) response")
+        }
+        return decoded
+    }
+
+    private func perform(
+        _ requestType: String, _ body: some Encodable
+    ) async throws(ObsError) -> Data {
+        guard state.isUsable, let socket else { throw .dropped("not connected to OBS") }
+
+        nextRequestId += 1
+        let id = String(nextRequestId)
+
+        try await send(
+            RequestEnvelope(d: .init(requestType: requestType, requestId: id, requestData: body)),
+            on: socket
+        )
+
+        // ponytail: no timeout. Every way OBS can fail to answer that has been
+        // observed goes through the socket, and failPending covers those. Add
+        // one if a request is ever seen to vanish with the socket still up.
+        let result: Result<Data, ObsError> = await withCheckedContinuation { continuation in
+            pending[id] = continuation
+        }
+        let data = try result.get()
+
+        if let failure = requestFailure(in: data) { throw failure }
+        return data
+    }
+
+    private func failPending(_ error: ObsError) {
+        // Taken before resuming: a resumed caller may issue a new request, and
+        // that one must not land in the map being torn down.
+        let waiting = pending
+        pending = [:]
+        for continuation in waiting.values { continuation.resume(returning: .failure(error)) }
     }
 
     // MARK: - Wire
@@ -201,6 +271,65 @@ struct Identify: Encodable {
         /// obs-websocket reject the Identify.
         let authentication: String?
     }
+}
+
+struct RequestEnvelope<Body: Encodable>: Encodable {
+    let op = 6
+    let d: D
+
+    struct D: Encodable {
+        let requestType: String
+        let requestId: String
+        let requestData: Body
+    }
+}
+
+/// For requests that take no arguments. Encodes as `{}`, which obs-websocket
+/// accepts.
+public struct NoBody: Encodable {
+    public init() {}
+}
+
+struct ResponseHeader: Decodable {
+    let requestId: String
+    let requestStatus: Status
+
+    struct Status: Decodable {
+        let result: Bool
+        let code: Int
+        let comment: String?
+    }
+}
+
+struct ResponseBody<D: Decodable>: Decodable {
+    let responseData: D?
+}
+
+// MARK: - Reading a response
+
+/// The requestId an op 7 belongs to, or nil if this is not a response at all.
+///
+/// Pure, and deliberately tolerant: anything unrecognised is "not for us"
+/// rather than a parse failure, because op 5 events come down the same pipe.
+public func responseId(in data: Data) -> String? {
+    guard (try? JSONDecoder().decode(OpCode.self, from: data))?.op == 7 else { return nil }
+    return try? JSONDecoder().decode(Payload<ResponseHeader>.self, from: data).d.requestId
+}
+
+/// The error in an op 7, or nil when it succeeded.
+///
+/// Pure so the mapping from OBS's `requestStatus` to a typed value is checkable
+/// against real captured JSON without a socket.
+public func requestFailure(in data: Data) -> ObsError? {
+    guard let header = try? JSONDecoder().decode(Payload<ResponseHeader>.self, from: data).d else {
+        return .dropped("unreadable response from OBS")
+    }
+    guard header.requestStatus.result else {
+        return .requestFailed(
+            code: header.requestStatus.code, comment: header.requestStatus.comment
+        )
+    }
+    return nil
 }
 
 // MARK: - Auth

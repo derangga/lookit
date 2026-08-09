@@ -927,6 +927,65 @@ do {
     expect(retryDelay(.dropped("x"), attempt: 30) == far, "a dropped socket backs off the same way")
 }
 
+// MARK: - Transport: request/response correlation
+
+print("responseId / requestFailure")
+
+do {
+    func json(_ text: String) -> Data { Data(text.utf8) }
+
+    // Shape captured from OBS 32.1.1 / obs-websocket 5.7.3, not invented.
+    let ok = json(
+        """
+        {"op":7,"d":{"requestType":"GetVersion","requestId":"3",
+        "requestStatus":{"result":true,"code":100},
+        "responseData":{"obsVersion":"32.1.1"}}}
+        """
+    )
+    expect(responseId(in: ok) == "3", "a response is matched to the request that asked for it")
+    expect(requestFailure(in: ok) == nil, "result true is success")
+
+    // An event arrives down the same socket and must not be mistaken for a
+    // response to anything, or it would resume the wrong caller.
+    let event = json(
+        """
+        {"op":5,"d":{"eventType":"CurrentProgramSceneChanged","eventIntent":4,
+        "eventData":{"sceneName":"Scene Browser"}}}
+        """
+    )
+    expect(responseId(in: event) == nil, "an op 5 event is not a response")
+
+    // 600 = ResourceNotFound, what asking for a missing scene item returns.
+    let failed = json(
+        """
+        {"op":7,"d":{"requestType":"GetSceneItemTransform","requestId":"7",
+        "requestStatus":{"result":false,"code":600,"comment":"No scene items were found."}}}
+        """
+    )
+    expect(responseId(in: failed) == "7", "a failed response is still correlated")
+    expect(
+        requestFailure(in: failed) == .requestFailed(code: 600, comment: "No scene items were found."),
+        "a refused request becomes a typed value carrying OBS's own code and comment"
+    )
+
+    // Some failures carry no comment at all; the code must still survive.
+    let terse = json(
+        """
+        {"op":7,"d":{"requestType":"SetSceneItemTransform","requestId":"8",
+        "requestStatus":{"result":false,"code":608}}}
+        """
+    )
+    expect(
+        requestFailure(in: terse) == .requestFailed(code: 608, comment: nil),
+        "a failure with no comment keeps its code"
+    )
+
+    expect(
+        requestFailure(in: json("{\"op\":7,\"d\":{}}")) == .dropped("unreadable response from OBS"),
+        "a malformed response is a dropped connection, not a crash"
+    )
+}
+
 // MARK: -
 
 print("")
