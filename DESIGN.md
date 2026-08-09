@@ -237,6 +237,10 @@ Established by inspection, not assumption:
 
 ## Open empirical questions
 
-1. Does `GetInputSettings` return a live or **stale** window id after the captured app relaunches? Fallback if stale: match on owner bundle id + pixel size.
-2. Is `NSWindow.sharingType = .none` honoured by ScreenCaptureKit on macOS 15? Verify by capturing with the HUD visible.
-3. Does 30Hz websocket easing look smooth, or stepped? This is the measurement ADR 0001 defers to.
+1. Does `GetInputSettings` return a live or **stale** window id after the captured app relaunches? Still open — needs obs-websocket enabled.
+
+   **Worse than expected, and already handled.** Window ids are *recycled*: id `384` is stored against `com.google.Chrome` in this machine's scene collection and today resolves to a live **Helium** window. A stale id does not fail, it names someone else's window. `WindowLocator.live` therefore validates the owner's bundle id, and a mismatch degrades to Unresolved.
+
+2. ~~Is `NSWindow.sharingType = .none` honoured by ScreenCaptureKit on macOS 15?~~ **Answered: yes.** `./scripts/verify-hud-not-captured.sh` captures the same region twice, once with the panel deliberately capturable and once normally, and fails if they match. On macOS 15.7.7 the HUD is present in the first and absent in the second.
+
+3. Does 30Hz websocket easing look smooth, or stepped? Still open — this is the measurement ADR 0001 defers to, and it needs the tick loop.
