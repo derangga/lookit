@@ -100,7 +100,26 @@ extension Config.OBS: Codable {
     }
 }
 
-extension Config.HUD: Codable {}
+extension Config.HUD: Codable {
+    private enum CodingKeys: String, CodingKey { case x, y }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = try c.decodeIfPresent(Double.self, forKey: .x)
+        y = try c.decodeIfPresent(Double.self, forKey: .y)
+    }
+
+    /// Encodes nil explicitly as null rather than omitting the key.
+    ///
+    /// JSON was chosen over TOML on the grounds that a complete default file
+    /// makes every key discoverable without comments. A key that disappears
+    /// when unset breaks exactly that promise.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(x, forKey: .x)
+        try c.encode(y, forKey: .y)
+    }
+}
 
 // MARK: - Validation
 

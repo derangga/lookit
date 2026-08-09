@@ -430,6 +430,13 @@ do {
     )
     expect(store.load() == .loaded(.fallback, []), "the written file reads back identically")
 
+    // JSON has no comments, so a complete file IS the documentation. A key that
+    // vanishes when unset is undiscoverable.
+    let seeded = (try? String(contentsOf: tmp, encoding: .utf8)) ?? ""
+    for key in ["deadZone", "easeMs", "stops", "zoomIn", "zoomOut", "reset", "host", "port", "password", "\"x\"", "\"y\""] {
+        expect(seeded.contains(key), "the seeded file shows \(key)")
+    }
+
     try? Data("{ not json".utf8).write(to: tmp)
     if case .rejected = store.load() {
         expect(true, "malformed JSON is rejected so the caller keeps last-good")
