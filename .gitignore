@@ -1,6 +1,10 @@
 .build/
 *.xcuserstate
 lookit.app/
+*.o
+*.d
+*.swiftdeps
+*.swiftdeps~
 
 # Beads: the Dolt database is local state. The JSONL export is the shareable
 # form and is committed instead.
