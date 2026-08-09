@@ -57,9 +57,21 @@ public final class OBSConnection {
         state = .disconnected(.notStarted)
     }
 
+    /// Interrupt, not cleanup. `URLSessionWebSocketTask.receive()` does not
+    /// observe Task cancellation, so killing the socket from outside is the
+    /// only thing that unblocks a `pump` waiting on OBS.
     private func close() {
-        socket?.cancel(with: .goingAway, reason: nil)
-        socket = nil
+        if let socket { release(socket) }
+    }
+
+    /// Release, guarded by identity.
+    ///
+    /// A `start()` while the previous attempt is still suspended installs a new
+    /// socket before the old one finishes unwinding. Without this check the
+    /// outgoing connection's release would take the incoming one down with it.
+    private func release(_ socket: URLSessionWebSocketTask) {
+        socket.cancel(with: .goingAway, reason: nil)
+        if self.socket === socket { self.socket = nil }
     }
 
     private func run(_ settings: Config.OBS) async {
@@ -78,10 +90,10 @@ public final class OBSConnection {
             }
 
             let reason = DisconnectReason(failure)
-            // Before anything else: nobody is left to answer an in-flight
-            // request, and a caller suspended on one would wait forever.
+            // The socket is already released — connectOnce owns that. What is
+            // left is the callers: nobody remains to answer an in-flight
+            // request, and one suspended on it would wait forever.
             failPending(failure)
-            close()
             guard !Task.isCancelled else { return }
             state = .disconnected(reason)
 
@@ -101,6 +113,10 @@ public final class OBSConnection {
 
         let socket = URLSession.shared.webSocketTask(with: url)
         self.socket = socket
+        // The whole point of this bead: release is structural. Every exit from
+        // here — returned, thrown, or interrupted — gives the socket back.
+        defer { release(socket) }
+
         state = .connecting
         socket.resume()
 
