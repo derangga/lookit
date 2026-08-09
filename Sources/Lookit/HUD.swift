@@ -62,7 +62,14 @@ public final class HUD {
         // Invariant 4, layer two. Window capture cannot include a different
         // window, but this is what keeps the HUD out of the shot if a source is
         // ever switched to display capture — and out of screenshots.
-        panel.sharingType = .none
+        //
+        // LOOKIT_HUD_CAPTURABLE exists only so the verification can tell
+        // "excluded from capture" apart from "never drawn at all". Without a way
+        // to make the panel capturable on demand, a blank screenshot proves
+        // nothing. It is opt-in and never set in normal use.
+        panel.sharingType =
+            ProcessInfo.processInfo.environment["LOOKIT_HUD_CAPTURABLE"] == "1"
+            ? .readOnly : .none
 
         // Follow the user across Spaces and stay put during Exposé, so it does
         // not vanish mid-stream.
