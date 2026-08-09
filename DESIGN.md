@@ -229,7 +229,7 @@ Established by inspection, not assumption:
 | | |
 |---|---|
 | macOS | 15.7.7, Swift 6.1.2 (typed throws available) |
-| OBS | 32.1.1, `obs-websocket` bundled, port 4455, **`server_enabled: false`** |
+| OBS | 32.1.1, `obs-websocket` 5.7.3 bundled, port 4455, **enabled, auth required** — Hello/Identify handshake verified against the password in `config.json` |
 | Canvas | 2992×1858 @ 30fps |
 | Captures | window capture (`screen_capture` type 1), not display capture |
 | TCC | **none required** — `RegisterEventHotKey`, `NSEvent.mouseLocation` and window *bounds* all need no permission |
@@ -237,9 +237,9 @@ Established by inspection, not assumption:
 
 ## Open empirical questions
 
-1. Does `GetInputSettings` return a live or **stale** window id after the captured app relaunches? Still open — needs obs-websocket enabled.
+1. ~~Does `GetInputSettings` return a live or **stale** window id after the captured app relaunches?~~ **Answered, and worse than expected — already handled.**
 
-   **Worse than expected, and already handled.** Window ids are *recycled*: id `384` is stored against `com.google.Chrome` in this machine's scene collection and today resolves to a live **Helium** window. A stale id does not fail, it names someone else's window. `WindowLocator.live` therefore validates the owner's bundle id, and a mismatch degrades to Unresolved.
+   Read live over the websocket, the `chrome` source returns `application: com.google.Chrome`, `window: 384`. Id `384` on this machine resolves to a live **Helium** window. Window ids are *recycled*: a stale id does not fail, it names someone else's window. `WindowLocator.live` therefore validates the owner's bundle id, and a mismatch degrades to Unresolved.
 
 2. ~~Is `NSWindow.sharingType = .none` honoured by ScreenCaptureKit on macOS 15?~~ **Answered: yes.** `./scripts/verify-hud-not-captured.sh` captures the same region twice, once with the panel deliberately capturable and once normally, and fails if they match. On macOS 15.7.7 the HUD is present in the first and absent in the second.
 
