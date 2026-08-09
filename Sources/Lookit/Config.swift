@@ -212,11 +212,20 @@ public enum ConfigLoad: Equatable, Sendable {
 
 public struct ConfigStore: Sendable {
     public var load: @Sendable () -> ConfigLoad
+    /// Returns nil on success, or a warning to show. Saving is only used for
+    /// the HUD position, so a failure degrades to "the panel forgets where it
+    /// was" rather than anything that should interrupt the user.
+    public var save: @Sendable (Config) -> ConfigWarning?
     public var path: URL
 
-    public init(path: URL, load: @escaping @Sendable () -> ConfigLoad) {
+    public init(
+        path: URL,
+        load: @escaping @Sendable () -> ConfigLoad,
+        save: @escaping @Sendable (Config) -> ConfigWarning? = { _ in nil }
+    ) {
         self.path = path
         self.load = load
+        self.save = save
     }
 }
 
@@ -226,7 +235,9 @@ extension ConfigStore {
         .appending(path: ".config/lookit/config.json")
 
     public static func live(path: URL = defaultPath) -> ConfigStore {
-        ConfigStore(path: path) {
+        ConfigStore(
+            path: path,
+            load: {
             guard FileManager.default.fileExists(atPath: path.path(percentEncoded: false)) else {
                 // Write the complete default file so every key is discoverable.
                 // A failure to write is not fatal: run on defaults and say so.
@@ -246,13 +257,32 @@ extension ConfigStore {
             } catch {
                 return .rejected(reason: describe(error))
             }
-        }
+            },
+            save: { config in
+                // ponytail: rewrites the whole file, so any key lookit does not
+                // know about is dropped. Fine while lookit owns the schema; if
+                // the file ever grows foreign keys, merge instead of replace.
+                do {
+                    try FileManager.default.createDirectory(
+                        at: path.deletingLastPathComponent(), withIntermediateDirectories: true
+                    )
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    try encoder.encode(config).write(to: path, options: .atomic)
+                    return nil
+                } catch {
+                    return ConfigWarning(
+                        key: "config", detail: "could not save: \(error.localizedDescription)"
+                    )
+                }
+            }
+        )
     }
 
     /// Always yields the same config. For tests and for reasoning about the app
     /// without touching the filesystem.
     public static func fixed(_ config: Config) -> ConfigStore {
-        ConfigStore(path: defaultPath) { .loaded(config, []) }
+        ConfigStore(path: defaultPath, load: { .loaded(config, []) })
     }
 }
 

@@ -755,6 +755,59 @@ do {
     expect(fake.unregisterCount == 2, "each install clears first")
 }
 
+// MARK: - HUD placement and display
+
+print("HUD")
+
+do {
+    let visible = (x: 0.0, y: 0.0, width: 1440.0, height: 900.0)
+    let size = (width: 168.0, height: 56.0)
+
+    let corner = hudOrigin(saved: nil, visible: visible, size: size)
+    expect(corner.x, 1248, "with no saved position the HUD sits bottom-right")
+    expect(corner.y, 24, "clear of the screen edge")
+
+    expect(
+        hudOrigin(saved: CGPoint(x: 300, y: 400), visible: visible, size: size)
+            == CGPoint(x: 300, y: 400),
+        "a saved position on screen is honoured"
+    )
+
+    // Unplugging the display the HUD was dragged onto must not leave it
+    // permanently invisible with no way to get it back.
+    let offscreen = hudOrigin(saved: CGPoint(x: 5000, y: 3000), visible: visible, size: size)
+    expect(offscreen == corner, "a saved position off screen falls back to the corner")
+    expect(
+        hudOrigin(saved: CGPoint(x: -500, y: 400), visible: visible, size: size) == corner,
+        "so does one off the left edge"
+    )
+    expect(
+        hudOrigin(saved: CGPoint(x: -140, y: 400), visible: visible, size: size)
+            == CGPoint(x: -140, y: 400),
+        "but a mostly-onscreen position is kept"
+    )
+
+    // A second display sits at a non-zero origin.
+    let second = (x: 1440.0, y: 0.0, width: 1920.0, height: 1080.0)
+    expect(
+        hudOrigin(saved: nil, visible: second, size: size).x, 3168,
+        "the corner is relative to the screen, not the origin"
+    )
+}
+
+do {
+    expect(stopsRuler(stops: [1, 1.5, 2, 3], current: 1) == "●1 · 1.5 · 2 · 3", "the ruler marks 1x")
+    expect(
+        stopsRuler(stops: [1, 1.5, 2, 3], current: 2) == "1 · 1.5 · ●2 · 3",
+        "and marks the current stop"
+    )
+    expect(
+        stopsRuler(stops: [1, 1.5, 2, 3], current: 1.9) == "1 · 1.5 · ●2 · 3",
+        "mid-animation it marks the nearest stop rather than going blank"
+    )
+    expect(stopsRuler(stops: [], current: 1) == "", "no stops renders nothing")
+}
+
 // MARK: -
 
 print("")

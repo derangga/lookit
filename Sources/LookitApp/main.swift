@@ -3,6 +3,7 @@
 
 import AppKit
 import Lookit
+import LookitCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -10,10 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configStore = ConfigStore.live()
     private var config = Config.fallback
     private var warnings: [ConfigWarning] = []
+    private var hud: HUD?
+    private var zoom = 1.0
 
     func applicationDidFinishLaunching(_: Notification) {
         loadConfig()
         installConfiguredHotkeys()
+        buildHUD()
         buildStatusItem()
     }
 
@@ -47,10 +51,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         warnings.append(contentsOf: hotkeyWarnings)
     }
 
-    // Zoom itself is not wired yet — the transport and tick loop are their own
-    // beads. Until then the shell proves the hotkeys arrive.
+    // MARK: - HUD
+
+    private func buildHUD() {
+        let saved: CGPoint? =
+            if let x = config.hud.x, let y = config.hud.y { CGPoint(x: x, y: y) } else { nil }
+
+        let hud = HUD(
+            savedPosition: saved,
+            perform: { [weak self] action in self?.perform(action) },
+            onMove: { [weak self] origin in self?.saveHUDPosition(origin) }
+        )
+        hud.setStops(config.stops)
+        hud.setZoom(zoom)
+        hud.show()
+        self.hud = hud
+    }
+
+    private func saveHUDPosition(_ origin: CGPoint) {
+        config.hud = Config.HUD(x: origin.x, y: origin.y)
+        if let warning = configStore.save(config) {
+            warnings.append(warning)
+            refreshMenu()
+        }
+    }
+
+    // OBS is not wired yet — the transport and tick loop are their own beads.
+    // Until then the zoom level is local, which is enough to prove the hotkeys
+    // and the HUD controls drive the same state.
     private func perform(_ action: HotkeyAction) {
-        NSLog("lookit: %@", action.rawValue)
+        switch action {
+        case .zoomIn: zoom = nextStop(stops: config.stops, from: zoom, direction: 1)
+        case .zoomOut: zoom = nextStop(stops: config.stops, from: zoom, direction: -1)
+        case .reset: zoom = config.stops.first ?? 1.0
+        }
+        hud?.setZoom(zoom)
         refreshMenu()
     }
 
