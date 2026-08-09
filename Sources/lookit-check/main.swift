@@ -7,6 +7,7 @@
 
 import CoreGraphics
 import Darwin
+import Foundation
 import Lookit
 import LookitCore
 
@@ -330,6 +331,111 @@ do {
         CaptureRect(x: 0, y: 0, width: 100, height: 100, scale: 2)
     )
     expect(fixed.locate(WindowID(999))?.scale ?? 0, 2, "the fixed locator ignores the id")
+}
+
+// MARK: - Keybinding boundary
+
+print("parseKeybinding")
+
+do {
+    expect(
+        parseKeybinding("cmd+opt+=") == Keybinding(keyCode: 24, modifiers: 2304),
+        "cmd+opt+= parses to the = keycode with both modifiers"
+    )
+    expect(parseKeybinding("CMD+OPT+0") == parseKeybinding("cmd+opt+0"), "case does not matter")
+    expect(parseKeybinding("⌘+⌥+0") == parseKeybinding("cmd+opt+0"), "symbols work too")
+    expect(parseKeybinding(" cmd + opt + 0 ") == parseKeybinding("cmd+opt+0"), "spaces are trimmed")
+    expect(parseKeybinding("cmd+opt++")?.keyCode == 24, "a trailing + is the plus key")
+    expect(parseKeybinding("ctrl+shift+up") != nil, "named keys and arrows work")
+
+    expect(parseKeybinding("cmd+opt+£") == nil, "an unknown key is rejected")
+    expect(parseKeybinding("hyper+z") == nil, "an unknown modifier is rejected")
+    expect(parseKeybinding("z") == nil, "a global hotkey with no modifier is rejected")
+    expect(parseKeybinding("") == nil, "empty is rejected")
+}
+
+// MARK: - Config boundary
+
+print("Config")
+
+do {
+    let json = Data(#"{"easeMs": 200}"#.utf8)
+    let parsed = try? JSONDecoder().decode(Config.self, from: json)
+    expect(parsed?.easeMs == 200, "a present key is used")
+    expect(parsed?.deadZone == 0.6, "a missing key falls back to its default")
+    expect(parsed?.keys.zoomIn == "cmd+opt+=", "a missing nested object falls back whole")
+}
+
+do {
+    let json = Data(#"{"easeMs": "fast"}"#.utf8)
+    expect(
+        (try? JSONDecoder().decode(Config.self, from: json)) == nil,
+        "a wrongly typed key is an error, not a silent default"
+    )
+}
+
+do {
+    var config = Config.fallback
+    config.stops = [3.0, 1.0, 0.2, 2.0]
+    config.easeMs = 99_999
+    config.deadZone = 4.2
+    config.obs.port = 0
+    let (fixed, warnings) = validated(config)
+
+    expect(fixed.stops == [1.0, 2.0, 3.0], "stops are sorted and sub-1x entries dropped")
+    expect(fixed.easeMs == 5000, "easeMs is clamped, not rejected")
+    expect(fixed.deadZone == 1.0, "deadZone is clamped to 0...1")
+    expect(fixed.obs.port == 4455, "an invalid port falls back to the default")
+    expect(warnings.count == 4, "every clamp produces a warning the HUD can show")
+}
+
+do {
+    var config = Config.fallback
+    config.stops = [0.5, 0.9]
+    let (fixed, warnings) = validated(config)
+    expect(fixed.stops == Config.fallback.stops, "an entirely unusable stops list falls back")
+    expect(warnings.first?.key == "stops", "and says so")
+}
+
+do {
+    let (config, warnings) = validated(Config.fallback)
+    expect(config == Config.fallback, "the defaults survive validation unchanged")
+    expect(warnings.isEmpty, "the defaults produce no warnings")
+}
+
+do {
+    var keys = Config.Keys(zoomIn: "cmd+opt+=", zoomOut: "nonsense", reset: "cmd+opt+0")
+    var parsed = keybindings(from: keys)
+    expect(parsed.zoomIn != nil, "a good binding survives a bad sibling")
+    expect(parsed.zoomOut == nil, "the bad binding is dropped")
+    expect(parsed.reset != nil, "one typo does not disable the others")
+    expect(parsed.warnings.count == 1, "and produces exactly one warning")
+
+    keys = Config.fallback.keys
+    parsed = keybindings(from: keys)
+    expect(parsed.warnings.isEmpty, "the default bindings all parse")
+}
+
+do {
+    // Round-trip the file that first run actually writes.
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "lookit-check-\(UUID().uuidString)/config.json")
+    defer { try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent()) }
+
+    let store = ConfigStore.live(path: tmp)
+    expect(store.load() == .seeded(.fallback), "a missing file seeds defaults rather than failing")
+    expect(
+        FileManager.default.fileExists(atPath: tmp.path(percentEncoded: false)),
+        "and the complete default file is written"
+    )
+    expect(store.load() == .loaded(.fallback, []), "the written file reads back identically")
+
+    try? Data("{ not json".utf8).write(to: tmp)
+    if case .rejected = store.load() {
+        expect(true, "malformed JSON is rejected so the caller keeps last-good")
+    } else {
+        expect(false, "malformed JSON must be rejected")
+    }
 }
 
 // MARK: -
