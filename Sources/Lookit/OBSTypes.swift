@@ -33,6 +33,24 @@ public struct Transform: Equatable, Sendable, Codable {
     public var width: Double
     public var height: Double
 
+    public init(
+        positionX: Double, positionY: Double, scaleX: Double, scaleY: Double,
+        rotation: Double, alignment: Int, boundsType: String, boundsAlignment: Int,
+        boundsWidth: Double, boundsHeight: Double,
+        cropLeft: Double, cropRight: Double, cropTop: Double, cropBottom: Double,
+        sourceWidth: Double, sourceHeight: Double, width: Double, height: Double
+    ) {
+        self.positionX = positionX; self.positionY = positionY
+        self.scaleX = scaleX; self.scaleY = scaleY
+        self.rotation = rotation; self.alignment = alignment
+        self.boundsType = boundsType; self.boundsAlignment = boundsAlignment
+        self.boundsWidth = boundsWidth; self.boundsHeight = boundsHeight
+        self.cropLeft = cropLeft; self.cropRight = cropRight
+        self.cropTop = cropTop; self.cropBottom = cropBottom
+        self.sourceWidth = sourceWidth; self.sourceHeight = sourceHeight
+        self.width = width; self.height = height
+    }
+
     /// The source's pixel dimensions, or nil when OBS reports a degenerate
     /// source — which it does for a capture whose window has gone away.
     ///

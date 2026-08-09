@@ -550,6 +550,85 @@ do {
     expect(unbounded.displaySize.width, 1470, "with no bounds the display size is source x scale")
 }
 
+// MARK: - Journal boundary
+
+print("JournalStore")
+
+let sampleTransform = Transform(
+    positionX: 0, positionY: 0, scaleX: 1, scaleY: 1, rotation: 0, alignment: 5,
+    boundsType: "OBS_BOUNDS_SCALE_INNER", boundsAlignment: 0,
+    boundsWidth: 2992, boundsHeight: 1858,
+    cropLeft: 0, cropRight: 0, cropTop: 0, cropBottom: 0,
+    sourceWidth: 2940, sourceHeight: 1912, width: 2992, height: 1858
+)
+let samplePristine = Pristine(
+    scene: SceneName("Scene Browser"), itemId: SceneItemId(2),
+    inputName: InputName("chrome"), transform: sampleTransform
+)
+
+do {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "lookit-journal-\(UUID().uuidString)")
+    let path = dir.appending(path: "restore.json")
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let store = JournalStore.live(path: path)
+
+    expect((try? store.read()) == .some(nil), "no journal reads as nothing to restore")
+
+    do {
+        try store.write(samplePristine)
+        expect(try store.read() == samplePristine, "a journal round-trips exactly")
+    } catch {
+        expect(false, "writing a journal should succeed (got \(error))")
+    }
+
+    // A human has to be able to read this file to fix things by hand.
+    let raw = (try? String(contentsOf: path, encoding: .utf8)) ?? ""
+    expect(raw.contains("\"scene\" : \"Scene Browser\""), "ids encode as bare values, not {raw:}")
+    expect(raw.contains("\"inputName\" : \"chrome\""), "the input name is readable in the file")
+
+    try? store.delete()
+    expect((try? store.read()) == .some(nil), "deleting leaves nothing to restore")
+    expect((try? store.delete()) != nil, "deleting a missing journal is not an error")
+}
+
+do {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "lookit-journal-\(UUID().uuidString)")
+    let path = dir.appending(path: "restore.json")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try? Data("{ half written".utf8).write(to: path)
+
+    let store = JournalStore.live(path: path)
+    do {
+        _ = try store.read()
+        expect(false, "a corrupt journal must not read as 'nothing to restore'")
+    } catch {
+        if case .corrupt = error {
+            expect(true, "a corrupt journal is reported as corrupt")
+        } else {
+            expect(false, "expected .corrupt, got \(error)")
+        }
+    }
+    expect(
+        FileManager.default.fileExists(atPath: path.path(percentEncoded: false)),
+        "and is kept on disk — it is the only evidence of the layout"
+    )
+}
+
+do {
+    // Invariant 1 rehearsed at the store level: this is the failure the zoom
+    // path must refuse to proceed through.
+    do {
+        try JournalStore.unwritable.write(samplePristine)
+        expect(false, "the unwritable journal must throw")
+    } catch {
+        expect(error == .writeFailed("unwritable"), "and it throws writeFailed")
+    }
+}
+
 // MARK: -
 
 print("")
