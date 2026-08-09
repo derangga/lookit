@@ -5,6 +5,7 @@
 // Depends only on LookitCore, which is also how we prove the core has no
 // hidden dependencies (DESIGN.md §9).
 
+import CoreGraphics
 import Darwin
 import Lookit
 import LookitCore
@@ -291,6 +292,35 @@ do {
         captureRect(fromBounds: ["X": "100", "Y": 0.0, "Width": 100.0, "Height": 50.0], scale: 2)
             == nil,
         "a wrongly typed value is rejected"
+    )
+}
+
+do {
+    // Window ids are recycled: id 384 was stored against com.google.Chrome and
+    // resolved to a live Helium window. Ownership must be checked, or lookit
+    // frames the wrong app with no error at all.
+    let info: [String: Any] = [kCGWindowOwnerPID as String: pid_t(742)]
+    let asHelium: (pid_t) -> String? = { _ in "net.imput.helium" }
+
+    expect(
+        ownerMatches(info, expected: "net.imput.helium", resolveBundleID: asHelium),
+        "a window owned by the expected app matches"
+    )
+    expect(
+        !ownerMatches(info, expected: "com.google.Chrome", resolveBundleID: asHelium),
+        "a recycled id owned by another app is rejected"
+    )
+    expect(
+        !ownerMatches(info, expected: "com.google.Chrome", resolveBundleID: { _ in nil }),
+        "a dead pid is rejected rather than treated as a match"
+    )
+    expect(
+        !ownerMatches([:], expected: "com.google.Chrome", resolveBundleID: asHelium),
+        "a window with no owner pid is rejected"
+    )
+    expect(
+        ownerMatches([:], expected: nil, resolveBundleID: asHelium),
+        "no expectation means no check"
     )
 }
 

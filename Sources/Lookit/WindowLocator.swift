@@ -19,14 +19,24 @@ extension WindowLocator {
     ///
     /// Needs no TCC permission: only window *titles* are withheld without
     /// Screen Recording, and bounds are not a title.
-    public static let live = WindowLocator { id in
-        guard
-            let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, id.raw)
-                as? [[String: Any]],
-            let bounds = infos.first?[kCGWindowBounds as String] as? [String: Any]
-        else { return nil }
+    ///
+    /// - Parameter bundleID: the application the window is expected to belong
+    ///   to. **Not optional in spirit** — macOS recycles window ids, so an id
+    ///   alone can resolve to a different app's window and lookit would frame
+    ///   the wrong thing silently. Passing nil skips the check and accepts that
+    ///   risk; only do so when the id was resolved moments ago.
+    public static func live(expecting bundleID: String?) -> WindowLocator {
+        WindowLocator { id in
+            guard
+                let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, id.raw)
+                    as? [[String: Any]],
+                let info = infos.first,
+                let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                ownerMatches(info, expected: bundleID, resolveBundleID: bundleID(forPID:))
+            else { return nil }
 
-        return captureRect(fromBounds: bounds, scale: backingScale(forBounds: bounds))
+            return captureRect(fromBounds: bounds, scale: backingScale(forBounds: bounds))
+        }
     }
 
     /// A window that is always exactly here. For tests and for reasoning about
@@ -59,6 +69,30 @@ public func captureRect(fromBounds bounds: [String: Any], scale: Double) -> Capt
     else { return nil }
 
     return CaptureRect(x: x, y: y, width: width, height: height, scale: scale)
+}
+
+/// Whether a window still belongs to the application lookit thinks it does.
+///
+/// Window ids are recycled by the window server: an id captured from OBS's
+/// settings can, after an app relaunch, name a live window owned by something
+/// else entirely. Verified in the wild — id 384 was stored against
+/// `com.google.Chrome` and resolved to a Helium window.
+///
+/// `resolveBundleID` is injected so this is testable without spawning processes.
+public func ownerMatches(
+    _ info: [String: Any],
+    expected bundleID: String?,
+    resolveBundleID: (pid_t) -> String?
+) -> Bool {
+    guard let expected = bundleID else { return true }
+
+    guard let pid = info[kCGWindowOwnerPID as String] as? pid_t else { return false }
+
+    return resolveBundleID(pid) == expected
+}
+
+func bundleID(forPID pid: pid_t) -> String? {
+    NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
 }
 
 /// The backing scale of whichever display the window is on, so a window dragged
