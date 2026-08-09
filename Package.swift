@@ -13,11 +13,20 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
-        // Assert-based self-check. Depends only on LookitCore, which is also
-        // how we prove the core has no hidden dependencies.
+        // The app layer: boundaries, transport, state. Imports Foundation and
+        // AppKit freely — everything LookitCore may not.
+        .target(
+            name: "Lookit",
+            dependencies: ["LookitCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+
+        // Assert-based self-check. Its dependency on LookitCore alone would
+        // prove the core standalone; it also covers the boundary parsers, which
+        // is why Lookit is a library rather than living inside the executable.
         .executableTarget(
             name: "lookit-check",
-            dependencies: ["LookitCore"],
+            dependencies: ["LookitCore", "Lookit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

@@ -6,6 +6,7 @@
 // hidden dependencies (DESIGN.md §9).
 
 import Darwin
+import Lookit
 import LookitCore
 
 var failures = 0
@@ -251,6 +252,54 @@ do {
         error == .ambiguous([InputName("chrome"), InputName("terminal")]),
         "two captures is ambiguous, listing only the captures"
     )
+}
+
+// MARK: - Window bounds boundary
+
+print("captureRect(fromBounds:)")
+
+do {
+    let bounds: [String: Any] = ["X": 100.0, "Y": 50.0, "Width": 1470.0, "Height": 956.0]
+    let parsed = captureRect(fromBounds: bounds, scale: 2.0)
+    expect(parsed?.x ?? -1, 100, "X passes through as top-left global points")
+    expect(parsed?.sourceSize.width ?? -1, 2940, "scale is applied to reach source pixels")
+}
+
+do {
+    // Every one of these must be rejected here, because visibleRegion treats a
+    // degenerate source as a die rather than a domain error.
+    expect(
+        captureRect(fromBounds: ["X": 0.0, "Y": 0.0, "Width": 0.0, "Height": 956.0], scale: 2)
+            == nil,
+        "zero width is rejected at the boundary"
+    )
+    expect(
+        captureRect(fromBounds: ["X": 0.0, "Y": 0.0, "Width": 100.0, "Height": -5.0], scale: 2)
+            == nil,
+        "negative height is rejected at the boundary"
+    )
+    expect(
+        captureRect(fromBounds: ["X": 0.0, "Y": 0.0, "Width": 100.0, "Height": 50.0], scale: 0)
+            == nil,
+        "a zero backing scale is rejected"
+    )
+    expect(
+        captureRect(fromBounds: ["X": 0.0, "Width": 100.0, "Height": 50.0], scale: 2) == nil,
+        "a missing key is rejected rather than defaulted"
+    )
+    expect(
+        captureRect(fromBounds: ["X": "100", "Y": 0.0, "Width": 100.0, "Height": 50.0], scale: 2)
+            == nil,
+        "a wrongly typed value is rejected"
+    )
+}
+
+do {
+    expect(WindowLocator.missing.locate(WindowID(1)) == nil, "the missing locator resolves nothing")
+    let fixed = WindowLocator.fixed(
+        CaptureRect(x: 0, y: 0, width: 100, height: 100, scale: 2)
+    )
+    expect(fixed.locate(WindowID(999))?.scale ?? 0, 2, "the fixed locator ignores the id")
 }
 
 // MARK: -
