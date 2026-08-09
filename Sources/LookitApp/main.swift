@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = Config.fallback
     private var warnings: [ConfigWarning] = []
     private var hud: HUD?
+    private var watcher: ConfigWatcher?
     private var zoom = 1.0
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -19,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installConfiguredHotkeys()
         buildHUD()
         buildStatusItem()
+        startWatchingConfig()
     }
 
     func applicationWillTerminate(_: Notification) {
@@ -40,6 +42,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // last had — on launch that is the defaults — and say so.
             warnings = [ConfigWarning(key: "config", detail: reason)]
         }
+    }
+
+    private func startWatchingConfig() {
+        let watcher = ConfigWatcher(store: configStore) { [weak self] load in
+            self?.applyReload(load)
+        }
+        watcher.start()
+        self.watcher = watcher
+    }
+
+    /// Only redo the work that the edit actually invalidated. lookit writes this
+    /// file itself when the HUD is dragged, so reacting to every difference
+    /// would churn the hotkeys on every drag.
+    private func applyReload(_ load: ConfigLoad) {
+        let previous = config
+
+        switch load {
+        case let .loaded(reloaded, reloadWarnings):
+            config = reloaded
+            warnings = reloadWarnings
+        case let .seeded(defaults):
+            config = defaults
+            warnings = []
+        case let .rejected(reason):
+            // Invariant 6: keep the last-good config and say what is wrong.
+            warnings = [ConfigWarning(key: "config", detail: reason)]
+            refreshMenu()
+            hud?.setStatus("config: \(reason)")
+            return
+        }
+
+        let delta = changes(from: previous, to: config)
+        if delta.keys { installConfiguredHotkeys() }
+        if delta.stops {
+            hud?.setStops(config.stops)
+            hud?.setZoom(zoom)
+        }
+
+        hud?.setStatus(warnings.isEmpty ? nil : warnings[0].detail)
+        refreshMenu()
     }
 
     private func installConfiguredHotkeys() {
@@ -136,9 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func reloadConfig() {
-        loadConfig()
-        installConfiguredHotkeys()
-        refreshMenu()
+        watcher?.reloadNow()
     }
 
     @objc private func quit() {

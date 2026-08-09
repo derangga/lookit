@@ -808,6 +808,42 @@ do {
     expect(stopsRuler(stops: [], current: 1) == "", "no stops renders nothing")
 }
 
+// MARK: - Hot-reload change detection
+
+print("changes(from:to:)")
+
+do {
+    expect(changes(from: .fallback, to: .fallback).isEmpty, "an identical config changes nothing")
+
+    // The case that matters: lookit writes this file itself on every HUD drag.
+    // If a moved panel counted as a change, the hotkeys would churn constantly.
+    var dragged = Config.fallback
+    dragged.hud = Config.HUD(x: 100, y: 200)
+    let afterDrag = changes(from: .fallback, to: dragged)
+    expect(afterDrag.isEmpty, "moving the HUD triggers no reload work")
+    expect(!afterDrag.keys, "and specifically does not re-register hotkeys")
+
+    var rebound = Config.fallback
+    rebound.keys.zoomIn = "ctrl+shift+z"
+    expect(changes(from: .fallback, to: rebound).keys, "a rebound key needs re-registering")
+
+    var retuned = Config.fallback
+    retuned.easeMs = 200
+    let tuning = changes(from: .fallback, to: retuned)
+    expect(tuning.tuning, "easeMs is a tuning change")
+    expect(!tuning.keys, "but does not touch the hotkeys")
+
+    var restopped = Config.fallback
+    restopped.stops = [1, 2, 4]
+    expect(changes(from: .fallback, to: restopped).stops, "new stops need the HUD updating")
+
+    var repointed = Config.fallback
+    repointed.obs.password = "hunter2"
+    let obs = changes(from: .fallback, to: repointed)
+    expect(obs.obs, "obs settings changing needs a reconnect")
+    expect(!obs.keys && !obs.stops, "and nothing else")
+}
+
 // MARK: -
 
 print("")
