@@ -1001,7 +1001,112 @@ do {
     )
 }
 
-// MARK: -
+// MARK: - Restore on launch
+
+print("restoreJournalIfPresent")
+
+/// A journal in memory, so the order of read/apply/delete is observable.
+final class FakeJournal: @unchecked Sendable {
+    var stored: Pristine?
+    var readThrows: JournalError?
+    var deleteThrows: JournalError?
+    var log: [String] = []
+
+    var store: JournalStore {
+        JournalStore(
+            read: { [self] () throws(JournalError) -> Pristine? in
+                log.append("read")
+                if let readThrows { throw readThrows }
+                return stored
+            },
+            write: { [self] pristine throws(JournalError) in
+                log.append("write")
+                stored = pristine
+            },
+            delete: { [self] () throws(JournalError) in
+                log.append("delete")
+                if let deleteThrows { throw deleteThrows }
+                stored = nil
+            }
+        )
+    }
+}
+
+/// Run a restore and hand back only its E. Keeping the typed call alone in the
+/// `do` is what lets `catch` see a RestoreError rather than `any Error`.
+@MainActor
+func restoreOutcome(
+    _ journal: JournalStore,
+    _ apply: (Pristine) async throws(ObsError) -> Void
+) async -> RestoreError? {
+    do {
+        try await restoreJournalIfPresent(journal: journal, apply: apply)
+        return nil
+    } catch {
+        return error
+    }
+}
+
+// Nothing on disk: the previous run exited clean, so OBS is never touched.
+do {
+    let journal = FakeJournal()
+    var applied = 0
+    let outcome = await restoreOutcome(journal.store) { _ in applied += 1 }
+    expect(outcome == nil, "a clean launch is not an error")
+    expect(applied == 0, "no journal means nothing to restore")
+    expect(journal.log == ["read"], "and OBS is never written to")
+}
+
+// The happy path, and the ordering invariant 1 rests on.
+do {
+    let journal = FakeJournal()
+    journal.stored = samplePristine
+    var applied: [Pristine] = []
+    let outcome = await restoreOutcome(journal.store) { applied.append($0) }
+    expect(outcome == nil, "a restorable journal restores")
+    expect(applied == [samplePristine], "replayed to OBS exactly as recorded")
+    expect(journal.log == ["read", "delete"], "and deleted only after OBS confirmed")
+    expect(journal.stored == nil, "the journal is gone once its work is done")
+}
+
+// The case that would lose the user's layout for good.
+do {
+    let journal = FakeJournal()
+    journal.stored = samplePristine
+    let refusal = ObsError.requestFailed(code: 600, comment: "No scene items were found.")
+    let outcome = await restoreOutcome(journal.store) { _ throws(ObsError) in throw refusal }
+    expect(
+        outcome == .refused(DisconnectReason(refusal).message),
+        "OBS refusing the write is reported as a refusal"
+    )
+    expect(journal.log == ["read"], "a journal OBS refused is NEVER deleted")
+    expect(journal.stored == samplePristine, "so the next launch can try again")
+}
+
+// Unreadable: the file stays, because it is the only record of the layout.
+do {
+    let journal = FakeJournal()
+    journal.readThrows = .corrupt("not JSON")
+    let outcome = await restoreOutcome(journal.store) { _ in
+        expect(false, "a journal that cannot be read must never reach OBS")
+    }
+    expect(outcome == .unreadable("not JSON"), "a corrupt journal is reported as unreadable")
+    expect(journal.log == ["read"], "and is left on disk untouched")
+}
+
+// Applied but not cleared. Its own case on purpose: the layout IS back, so the
+// user must not be told the restore failed.
+do {
+    let journal = FakeJournal()
+    journal.stored = samplePristine
+    journal.deleteThrows = .deleteFailed("permission denied")
+    let outcome = await restoreOutcome(journal.store) { _ in }
+    expect(outcome == .notCleared("permission denied"), "failing to clear is its own case")
+    expect(
+        outcome?.message.contains("restored") == true,
+        "and it says the layout is back, because it is"
+    )
+}
 
 print("")
 if failures == 0 {

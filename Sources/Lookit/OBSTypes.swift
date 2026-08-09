@@ -140,6 +140,30 @@ public struct CaptureSettings: Decodable, Sendable {
     public let display_uuid: String?
 }
 
+// MARK: - Requests
+
+/// The only write lookit ever makes to a scene.
+///
+/// OBS accepts a whole transform back verbatim, read-only fields and all —
+/// verified against 32.1.1 — so a journalled Pristine replays as it was read.
+/// Fields lookit does not carry, such as `cropToBounds`, are left untouched
+/// because OBS merges rather than replaces.
+public struct SetSceneItemTransformRequest: Encodable, Sendable {
+    public let sceneName: String
+    public let sceneItemId: Int
+    public let sceneItemTransform: Transform
+
+    public init(scene: SceneName, itemId: SceneItemId, transform: Transform) {
+        sceneName = scene.raw
+        sceneItemId = itemId.raw
+        sceneItemTransform = transform
+    }
+
+    public init(_ pristine: Pristine) {
+        self.init(scene: pristine.scene, itemId: pristine.itemId, transform: pristine.transform)
+    }
+}
+
 // MARK: - Events
 
 /// The op 5 events lookit acts on.

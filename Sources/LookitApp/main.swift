@@ -9,6 +9,8 @@ import LookitCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let configStore = ConfigStore.live()
+    private let journal = JournalStore.live()
+    private var restored = false
     private var config = Config.fallback
     private var warnings: [ConfigWarning] = []
     private var hud: HUD?
@@ -42,12 +44,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // per transition, not a log framework.
             FileHandle.standardError.write(Data("lookit: \(state.message)\n".utf8))
             self?.refreshMenu()
-            if state.isUsable { self?.readVersion() }
+            if state.isUsable { self?.onIdentified() }
         } onEvent: { [weak self] event in
             self?.handle(event)
         }
         connection.start(config.obs)
         self.connection = connection
+    }
+
+    /// Restore comes before anything else touches the scene, per §2.
+    private func onIdentified() {
+        Task { [weak self] in
+            await self?.restoreDirtyLayout()
+            await self?.readVersion()
+        }
+    }
+
+    /// Once per launch, not once per connection. A journal written by *this*
+    /// run belongs to a target that is still live, and a mid-session reconnect
+    /// must not undo the zoom the user is currently looking at.
+    private func restoreDirtyLayout() async {
+        guard !restored, let connection else { return }
+        // Set before the attempt: a failed restore keeps its journal and waits
+        // for the next launch rather than retrying on every reconnect.
+        restored = true
+
+        do {
+            try await restoreJournalIfPresent(journal: journal) { pristine throws(ObsError) in
+                try await connection.call(
+                    "SetSceneItemTransform", SetSceneItemTransformRequest(pristine)
+                )
+            }
+        } catch {
+            warnings.append(ConfigWarning(key: "restore", detail: error.message))
+            hud?.setStatus(error.message)
+            FileHandle.standardError.write(Data("lookit: \(error.message)\n".utf8))
+            refreshMenu()
+        }
     }
 
     /// Releasing the outgoing target and resolving the new one is its own bead,
@@ -62,14 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The first real round-trip. Target resolution is the next bead; until then
     /// this is what proves op 6 out and op 7 back actually correlate.
-    private func readVersion() {
-        Task { [weak self] in
-            guard let connection = self?.connection else { return }
-            let version = try? await connection.call("GetVersion", NoBody(), as: ObsVersion.self)
-            self?.obsVersion = version?.obsVersion
-            FileHandle.standardError.write(Data("lookit: OBS \(version?.obsVersion ?? "?")\n".utf8))
-            self?.refreshMenu()
-        }
+    private func readVersion() async {
+        guard let connection else { return }
+        let version = try? await connection.call("GetVersion", NoBody(), as: ObsVersion.self)
+        obsVersion = version?.obsVersion
+        FileHandle.standardError.write(Data("lookit: OBS \(version?.obsVersion ?? "?")\n".utf8))
+        refreshMenu()
     }
 
     // MARK: - Config
