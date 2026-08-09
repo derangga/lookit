@@ -4,6 +4,12 @@ import PackageDescription
 let package = Package(
     name: "lookit",
     platforms: [.macOS(.v13)],
+    products: [
+        // The product is named lookit; the target cannot be, because target
+        // build directories would collide with the Lookit library's on a
+        // case-insensitive filesystem.
+        .executable(name: "lookit", targets: ["LookitApp"])
+    ],
     targets: [
         // R = never. Imports nothing — not AppKit, not Foundation, not
         // CoreGraphics. The module boundary is what enforces invariant 5:
@@ -18,6 +24,14 @@ let package = Package(
         .target(
             name: "Lookit",
             dependencies: ["LookitCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+
+        // The menubar shell. Thin by design: app lifecycle and nothing else, so
+        // everything below stays testable without a running NSApplication.
+        .executableTarget(
+            name: "LookitApp",
+            dependencies: ["Lookit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 
