@@ -691,6 +691,63 @@ do {
     )
 }
 
+// MARK: - Hotkey installation
+
+print("installHotkeys")
+
+do {
+    let fake = RecordedHotkeys()
+    let warnings = installHotkeys(
+        Config.fallback.keys, registrar: fake.registrar, perform: { fake.record($0) }
+    )
+    expect(warnings.isEmpty, "the default bindings install cleanly")
+    expect(fake.registered.count == 3, "all three hotkeys register")
+    expect(fake.unregisterCount == 1, "installing first clears whatever was there")
+
+    fake.fire(0)
+    fake.fire(2)
+    expect(fake.fired == [.zoomIn, .reset], "each hotkey invokes its own action")
+}
+
+do {
+    // One typo must not disable the other two.
+    let keys = Config.Keys(zoomIn: "cmd+opt+=", zoomOut: "gibberish", reset: "cmd+opt+0")
+    let fake = RecordedHotkeys()
+    let warnings = installHotkeys(keys, registrar: fake.registrar, perform: { fake.record($0) })
+
+    expect(fake.registered.count == 2, "the two valid bindings still register")
+    expect(warnings.count == 1, "and exactly one warning explains the third")
+    expect(warnings.first?.key == "keys.zoomOut", "naming the binding that failed")
+
+    fake.fire(1)
+    expect(fake.fired == [.reset], "the surviving bindings keep their own actions")
+}
+
+do {
+    // The system refusing a combination is a different failure from a typo, and
+    // needs a different message — "another app owns it" is actionable.
+    let occupied = parseKeybinding("cmd+opt+=")!.keyCode
+    let fake = RecordedHotkeys(refusing: [occupied])
+    let warnings = installHotkeys(
+        Config.fallback.keys, registrar: fake.registrar, perform: { fake.record($0) }
+    )
+    expect(fake.registered.count == 2, "the refused binding is not registered")
+    expect(warnings.count == 1, "the refusal is reported")
+    expect(
+        warnings.first?.detail.contains("another app") == true,
+        "and says the likely cause rather than just failing"
+    )
+}
+
+do {
+    // Hot-reload: installing again must replace, not accumulate.
+    let fake = RecordedHotkeys()
+    _ = installHotkeys(Config.fallback.keys, registrar: fake.registrar, perform: { _ in })
+    _ = installHotkeys(Config.fallback.keys, registrar: fake.registrar, perform: { _ in })
+    expect(fake.registered.count == 3, "re-installing replaces rather than accumulating")
+    expect(fake.unregisterCount == 2, "each install clears first")
+}
+
 // MARK: -
 
 print("")
