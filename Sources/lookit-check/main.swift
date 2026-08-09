@@ -438,6 +438,118 @@ do {
     }
 }
 
+// MARK: - obs-websocket boundary
+
+print("obs-websocket responses")
+
+func decode<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
+    try? JSONDecoder().decode(T.self, from: Data(json.utf8))
+}
+
+do {
+    // Field names and shape taken from the real scene collection on this machine.
+    let list = decode(
+        SceneItemListResponse.self,
+        """
+        {"sceneItems":[
+          {"sceneItemId":1,"sourceName":"camera","inputKind":"macos-avcapture"},
+          {"sceneItemId":2,"sourceName":"chrome","inputKind":"screen_capture"},
+          {"sceneItemId":3,"sourceName":"a group","inputKind":null}
+        ]}
+        """
+    )
+    expect(list?.sceneItems.count == 3, "all items decode")
+
+    let summaries = list?.summaries ?? []
+    expect(summaries.count == 3, "summaries preserve every item")
+
+    if let picked = try? pickCaptureItem(summaries) {
+        expect(picked.inputName == InputName("chrome"), "the real scene picks chrome")
+        expect(picked.id == SceneItemId(2), "and carries its scene item id")
+    } else {
+        expect(false, "picking from the real scene shape should succeed")
+    }
+}
+
+do {
+    expect(
+        decode(CurrentSceneResponse.self, #"{"currentProgramSceneName":"Scene Browser"}"#)?
+            .sceneName == SceneName("Scene Browser"),
+        "the obs-websocket 5.x scene name field is accepted"
+    )
+    expect(
+        decode(CurrentSceneResponse.self, #"{"sceneName":"Scene Terminal"}"#)?
+            .sceneName == SceneName("Scene Terminal"),
+        "so is the newer field, rather than pinning to one OBS build"
+    )
+    expect(
+        decode(CurrentSceneResponse.self, #"{"somethingElse":"x"}"#) == nil,
+        "neither field present is an error"
+    )
+}
+
+do {
+    // Exactly the settings stored in this machine's scene collection.
+    let chrome = decode(
+        CaptureSettings.self,
+        #"{"application":"com.google.Chrome","display_uuid":"37D8","type":1,"window":384}"#
+    )
+    expect(
+        chrome.map(captureBinding) == .window(WindowID(384), bundleID: "com.google.Chrome"),
+        "a window capture yields its id and the owner to validate against"
+    )
+
+    let terminal = decode(CaptureSettings.self, #"{"type":1,"window":37}"#)
+    expect(
+        terminal.map(captureBinding) == .window(WindowID(37), bundleID: nil),
+        "a window capture with no recorded application still binds"
+    )
+
+    let display = decode(CaptureSettings.self, #"{"type":0,"display_uuid":"37D8"}"#)
+    expect(
+        display.map(captureBinding) == .display(uuid: "37D8"),
+        "display capture is reported explicitly, not as a bare failure"
+    )
+
+    let app = decode(CaptureSettings.self, #"{"type":2,"application":"com.apple.Safari"}"#)
+    expect(
+        app.map(captureBinding) == .unsupported(type: 2),
+        "application capture is unsupported and says which type it was"
+    )
+
+    let broken = decode(CaptureSettings.self, #"{"type":1}"#)
+    expect(
+        broken.map(captureBinding) == .unsupported(type: 1),
+        "a window capture with no window id is unsupported, not a crash"
+    )
+}
+
+do {
+    let json = """
+        {"sceneItemTransform":{
+          "positionX":0,"positionY":0,"scaleX":1,"scaleY":1,"rotation":0,
+          "alignment":5,"boundsType":"OBS_BOUNDS_SCALE_INNER","boundsAlignment":0,
+          "boundsWidth":2992,"boundsHeight":1858,
+          "cropLeft":0,"cropRight":0,"cropTop":0,"cropBottom":0,
+          "sourceWidth":2940,"sourceHeight":1912,"width":2992,"height":1858}}
+        """
+    let transform = decode(SceneItemTransformResponse.self, json)?.sceneItemTransform
+    expect(transform?.sourceSize == SourceSize(width: 2940, height: 1912), "source size parses")
+    expect(transform?.displaySize.width ?? 0, 2992, "bounds win over scale for display size")
+
+    var degenerate = transform!
+    degenerate.sourceWidth = 0
+    expect(
+        degenerate.sourceSize == nil,
+        "a degenerate source is nil, so it can never reach the framing math"
+    )
+
+    var unbounded = transform!
+    unbounded.boundsType = "OBS_BOUNDS_NONE"
+    unbounded.scaleX = 0.5
+    expect(unbounded.displaySize.width, 1470, "with no bounds the display size is source x scale")
+}
+
 // MARK: -
 
 print("")
