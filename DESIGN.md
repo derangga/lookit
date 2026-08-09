@@ -1,0 +1,242 @@
+# lookit — Design
+
+Domain vocabulary is in [CONTEXT.md](./CONTEXT.md). Settled decisions are in [docs/adr/](./docs/adr/).
+
+```
+lookit → Graph → A / E / R
+│          │      │   │  │
+│          │      │   │  └─ what each node needs        §5
+│          │      │   └──── where the graph breaks      §4
+│          │      └──────── what flows through nodes    §2
+│          └─ nodes = functions, edges = data flow
+└─ the problem: cursor-following zoom on one OBS scene item
+```
+
+## §1 Shapes
+
+**IDs** — branded, never bare `String`/`Int`:
+`SceneName` · `SceneItemId` · `InputName` · `InputKind` · `WindowID`
+
+**Records:**
+`Transform` (crop, bounds, scale, source dims) · `CaptureRect` (screen region + backing scale) · `VisibleRegion` (origin + size, source px) · `Target` · `Config` · `Pristine`
+
+**Variants:**
+
+```
+Connection  = disconnected | connecting | identified
+TargetState = unresolved(reason) | resolved(Target)
+PanState    = following | frozen
+Dirtiness   = clean | dirty(Pristine)
+```
+
+**Errors** — tagged, carrying context, never strings:
+
+```
+ObsError     = serverDisabled | refused | authFailed
+             | requestFailed(code, comment) | dropped
+TargetError  = noCaptureInScene | ambiguous([InputName])
+             | windowNotFound(WindowID)
+ConfigError  = unreadable | malformed(reason) | badKeybinding(String)
+JournalError = writeFailed | restoreFailed
+```
+
+## §2 A — the happy path
+
+**Startup:**
+
+```ts
+main
+  → loadConfig
+    → readFile
+    → parseConfig                    // boundary
+    → compileKeybindings
+  → obs.connect
+    → websocket.open
+    → identify
+  → restoreJournalIfPresent
+    → readJournal                    // boundary
+    → obs.setSceneItemTransform      // pristine
+    → deleteJournal
+  → resolveTarget
+    → obs.getCurrentProgramScene
+    → obs.getSceneItemList
+    → pickCaptureItem                // pure — skips camera by kind
+    → obs.getInputSettings
+    → locateWindow                   // boundary
+  → installHotkeys
+  → showHUD
+  → startTick
+```
+
+**Tick — 30Hz, the core loop:**
+
+```ts
+tick
+  → readCursor
+  → locateWindow                     // re-read; the window may have moved
+  → mapCursorToSourcePixels          // pure
+  → nextPanCenter                    // pure — dead zone
+  → ease                             // pure
+  → zoomCrop                         // pure
+  → obs.setSceneItemTransform
+```
+
+**Hotkey:**
+
+```ts
+onHotkey(zoomIn)
+  → nextStop                         // pure
+  → ensureJournalled                 // acquire dirty
+  → recenterOnCursor
+  → setTargetZoom                    // the tick loop animates it
+```
+
+**Scene switch:**
+
+```ts
+obs.events ▸ CurrentProgramSceneChanged
+  → restoreTarget                    // release dirty
+  → deleteJournal
+  → resolveTarget
+  → setZoom(1.0)
+```
+
+Most of the tick loop is pure. That is not aesthetic — it is what makes [ADR 0001](./docs/adr/0001-drive-obs-via-websocket.md)'s escape hatch real.
+
+## §3 Cardinality
+
+```
+Stream:  obs.events · tick(30Hz) · hotkeys · configFileChanges
+Effect:  connect · each request · locateWindow · journal read/write
+Bounded: CaptureRect valid 1 tick · sceneItemList valid until scene change
+```
+
+30Hz because the canvas is 30fps. 60 would be double the traffic for no visible gain.
+
+## §4 E — where it breaks
+
+```ts
+main
+  → loadConfig
+    ⚠ unreadable    → escape: write defaults, continue
+    ⚠ malformed     → escape: keep last-good, HUD warns   // never crash on hot-reload
+    ⚠ badKeybinding → escape: skip that binding, HUD warns
+  → obs.connect
+    ⚠ refused        → RETRY backoff                       // OBS not up yet
+    ⚠ serverDisabled → RETRY slowly + HUD says to enable it
+    ⚠ authFailed     → escape: stop, HUD shows why         // retry cannot fix a wrong password
+  → restoreJournalIfPresent
+    ⚠ restoreFailed → escape: keep journal on disk, retry next launch
+  → resolveTarget
+    ⚠ noCaptureInScene → escape: unresolved, hotkeys no-op
+    ⚠ ambiguous        → escape: menubar picker, remember
+    ⚠ windowNotFound   → escape: unresolved
+  → tick
+    ⚠ cursor outside rect → not an error: PanState = frozen
+    ⚠ dropped             → RETRY connect; the journal covers the dirty item
+    ⚠ invalid crop        → DIE                            // invariant violation
+onHotkey
+  → ensureJournalled
+    ⚠ writeFailed → escape: REFUSE TO ZOOM
+```
+
+**No journal, no zoom.** Going dirty without a durable pristine record is the only thing that can damage the user's OBS layout, so it is a precondition, not best-effort.
+
+Exactly one `die` in the whole design. Everything else is a value in E.
+
+Each layer scopes its own E before passing outward:
+
+```
+transport      →  target        →  controller
+E=ObsError        E=TargetError    E=(surfaced in HUD)
+```
+
+## §5 R — what each node needs
+
+```
+zoomCrop, nextPanCenter, ease, pickCaptureItem, mapCursor   R = never
+locateWindow                                                R = WindowLocator
+readCursor                                                  R = CursorSource
+tick                                                        R = Clock
+every obs.*                                                 R = OBSClient
+loadConfig / watch                                          R = ConfigStore
+journal *                                                   R = JournalStore
+installHotkeys                                              R = HotkeyRegistrar
+```
+
+Swift has no R channel and cannot prove R is discharged the way Effect can. The substitute: the pure core takes **only values**, so its R is structurally empty — there is nothing to inject. Keep it in its own directory with no AppKit and no networking imports.
+
+## §6 Boundary — `unknown → trusted`
+
+```
+obs-websocket JSON  → Transform, SceneItemList, InputSettings
+config.json         → Config
+restore.json        → Pristine
+CGWindowList dict   → CaptureRect
+```
+
+Cursor coordinates come from the OS — trusted, no parse. Parse once at the edge; everything inside trusts the types.
+
+## §7 Behavior — wraps without changing the graph
+
+```
+reconnect + backoff  ⟳ every obs.*
+coalesce             ⟳ setSceneItemTransform   // drop stale frame if one is in flight
+lastGood             ⟳ loadConfig
+log                  ⟳ all
+```
+
+Frame coalescing keeps the 30Hz loop from queueing behind a slow round-trip.
+
+## §8 Scope
+
+```ts
+withConnection {           // release: close socket
+  withHotkeys {            // release: unregister
+    withDirtyTarget {      // acquire: journal + reframe
+      ...                  // release: restore pristine + delete journal
+    }
+  }
+}
+```
+
+The dirty target is a **resource**, not a state flag. That is [ADR 0002](./docs/adr/0002-journal-the-pristine-transform.md) made structural: "always restorable" becomes a property of the type rather than something that must be correct in five separate exit paths.
+
+## §9 Swap R to prove it
+
+```ts
+// Production
+tick
+  → CursorSource.live          → NSEvent.mouseLocation
+  → WindowLocator.live         → CGWindowListCopyWindowInfo
+  → Clock.live                 → 30Hz timer
+  → OBSClient.live             → websocket
+
+// Tests
+tick
+  → CursorSource.scripted      → [(0,0), (900,400), (2000,900)]
+  → WindowLocator.fixed        → 1470×956 @2x
+  → Clock.manual               → step() per assertion
+  → OBSClient.recording        → captures transforms, asserts nothing
+```
+
+Same graph, same A, same E. Assert on the recorded transform sequence — this exercises the eased pan end to end, not just `zoomCrop` in isolation.
+
+## Environment facts
+
+Established by inspection, not assumption:
+
+| | |
+|---|---|
+| macOS | 15.7.7, Swift 6.1.2 (typed throws available) |
+| OBS | 32.1.1, `obs-websocket` bundled, port 4455, **`server_enabled: false`** |
+| Canvas | 2992×1858 @ 30fps |
+| Captures | window capture (`screen_capture` type 1), not display capture |
+| TCC | **none required** — `RegisterEventHotKey`, `NSEvent.mouseLocation` and window *bounds* all need no permission |
+| Hotkeys | `⌘⌥=` / `⌘⌥-` / `⌘⌥0` free here (`closeViewHotkeysEnabled = 0`); these are the system zoom shortcuts on stock macOS |
+
+## Open empirical questions
+
+1. Does `GetInputSettings` return a live or **stale** window id after the captured app relaunches? Fallback if stale: match on owner bundle id + pixel size.
+2. Is `NSWindow.sharingType = .none` honoured by ScreenCaptureKit on macOS 15? Verify by capturing with the HUD visible.
+3. Does 30Hz websocket easing look smooth, or stepped? This is the measurement ADR 0001 defers to.
