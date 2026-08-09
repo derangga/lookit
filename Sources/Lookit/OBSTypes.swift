@@ -140,6 +140,42 @@ public struct CaptureSettings: Decodable, Sendable {
     public let display_uuid: String?
 }
 
+// MARK: - Events
+
+/// The op 5 events lookit acts on.
+///
+/// One case, because one event is consumed. OBS sends dozens by default and
+/// the rest are dropped at the boundary rather than modelled here.
+public enum ObsEvent: Equatable, Sendable {
+    /// The program scene changed. Invariant 2: the outgoing target must be
+    /// released before the new one is acquired.
+    case sceneChanged(SceneName)
+}
+
+private struct SceneChangedEvent: Decodable {
+    let eventType: String
+    let eventData: EventData
+
+    struct EventData: Decodable {
+        let sceneName: String
+    }
+}
+
+/// The event in an op 5 frame, or nil if this is not an event lookit acts on.
+///
+/// Pure, and tolerant in the same way `responseId` is: anything unrecognised is
+/// "not for us". An unknown event must never disturb the socket.
+public func obsEvent(in data: Data) -> ObsEvent? {
+    guard
+        (try? JSONDecoder().decode(OpCode.self, from: data))?.op == 5,
+        let event = try? JSONDecoder().decode(Payload<SceneChangedEvent>.self, from: data).d,
+        // Other events carry a sceneName too — SceneItemCreated among them —
+        // so the decode succeeding is not enough to identify this one.
+        event.eventType == "CurrentProgramSceneChanged"
+    else { return nil }
+    return .sceneChanged(SceneName(event.eventData.sceneName))
+}
+
 // MARK: - What is being captured
 
 public enum CaptureBinding: Equatable, Sendable {

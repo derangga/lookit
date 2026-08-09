@@ -18,6 +18,7 @@ public final class OBSConnection {
     }
 
     private let onState: (Connection) -> Void
+    private let onEvent: (ObsEvent) -> Void
     private var socket: URLSessionWebSocketTask?
     private var loop: Task<Void, Never>?
 
@@ -25,8 +26,19 @@ public final class OBSConnection {
     private var pending: [String: CheckedContinuation<Result<Data, ObsError>, Never>] = [:]
     private var nextRequestId = 0
 
-    public init(onState: @escaping (Connection) -> Void) {
+    /// `onEvent` is §3's `obs.events` Stream. A closure rather than an
+    /// AsyncStream because the other two Streams in this app — hotkeys and
+    /// config file changes — are already closures onto the same main actor,
+    /// and a `for await` here would only add a hop.
+    ///
+    /// Disconnects do not come through it: they are already `onState`, and one
+    /// state change reported twice is one too many.
+    public init(
+        onState: @escaping (Connection) -> Void,
+        onEvent: @escaping (ObsEvent) -> Void
+    ) {
         self.onState = onState
+        self.onEvent = onEvent
     }
 
     // MARK: - Lifecycle
@@ -119,13 +131,14 @@ public final class OBSConnection {
     }
 
     private func dispatch(_ data: Data) {
-        // An op 7 for an id nobody is waiting on is dropped on purpose: the
-        // caller was cancelled, and that is not an error worth killing the
-        // socket over. op 5 events are their own bead.
-        guard let id = responseId(in: data), let waiter = pending.removeValue(forKey: id) else {
+        if let id = responseId(in: data) {
+            // An op 7 for an id nobody is waiting on is dropped on purpose: the
+            // caller was cancelled, and that is not an error worth killing the
+            // socket over.
+            pending.removeValue(forKey: id)?.resume(returning: .success(data))
             return
         }
-        waiter.resume(returning: .success(data))
+        if let event = obsEvent(in: data) { onEvent(event) }
     }
 
     // MARK: - Requests

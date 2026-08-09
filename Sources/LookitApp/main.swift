@@ -43,9 +43,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             FileHandle.standardError.write(Data("lookit: \(state.message)\n".utf8))
             self?.refreshMenu()
             if state.isUsable { self?.readVersion() }
+        } onEvent: { [weak self] event in
+            self?.handle(event)
         }
         connection.start(config.obs)
         self.connection = connection
+    }
+
+    /// Releasing the outgoing target and resolving the new one is its own bead,
+    /// and needs a journal that does not exist yet. Until then this proves the
+    /// event actually arrives — which is the part the socket is responsible for.
+    private func handle(_ event: ObsEvent) {
+        switch event {
+        case let .sceneChanged(scene):
+            FileHandle.standardError.write(Data("lookit: scene → \(scene.raw)\n".utf8))
+        }
     }
 
     /// The first real round-trip. Target resolution is the next bead; until then

@@ -954,6 +954,21 @@ do {
         """
     )
     expect(responseId(in: event) == nil, "an op 5 event is not a response")
+    expect(
+        obsEvent(in: event) == .sceneChanged(SceneName("Scene Browser")),
+        "and it is read as the event it is"
+    )
+    expect(obsEvent(in: ok) == nil, "a response is not an event")
+
+    // Carries a sceneName of its own. Decoding alone would accept it, so the
+    // eventType is what keeps it from being read as a scene switch.
+    let itemCreated = json(
+        """
+        {"op":5,"d":{"eventType":"SceneItemCreated","eventIntent":8,
+        "eventData":{"sceneName":"Scene Browser","sourceName":"chrome","sceneItemId":3}}}
+        """
+    )
+    expect(obsEvent(in: itemCreated) == nil, "another event that names a scene is still not a switch")
 
     // 600 = ResourceNotFound, what asking for a missing scene item returns.
     let failed = json(
