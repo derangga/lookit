@@ -106,6 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         hud.setStops(config.stops)
         hud.setZoom(zoom)
+        // Warnings raised during launch must reach the HUD too, not just the
+        // menu — the reload path is not the only way to end up with one.
+        hud.setStatus(warnings.first?.detail)
         hud.show()
         self.hud = hud
     }

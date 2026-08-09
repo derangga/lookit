@@ -27,7 +27,7 @@ public final class HUD {
         self.onMove = onMove
 
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 168, height: 56),
+            contentRect: NSRect(x: 0, y: 0, width: HUD.width, height: HUD.baseHeight),
             // .nonactivatingPanel is the whole point: clicking + must not pull
             // focus away from the app being captured.
             styleMask: [.borderless, .nonactivatingPanel],
@@ -94,6 +94,10 @@ public final class HUD {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.alignment = .center
         statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.maximumNumberOfLines = 1
+        // Without this the label refuses to shrink, the stack grows to fit, and
+        // a long warning spills outside the panel's rounded background.
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let controls = NSStackView(views: [
             button("minus", .zoomOut),
@@ -117,6 +121,7 @@ public final class HUD {
             stack.bottomAnchor.constraint(equalTo: background.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: background.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            stack.widthAnchor.constraint(equalToConstant: HUD.width),
         ])
 
         panel.contentView = background
@@ -177,7 +182,22 @@ public final class HUD {
     public func setStatus(_ text: String?) {
         statusLabel.stringValue = text ?? ""
         statusLabel.isHidden = text == nil
+        statusLabel.toolTip = text  // the full text, since the label truncates
+
+        // Grow for the extra line rather than letting it overlap the ruler.
+        // Resizing keeps the bottom-left origin, so the panel does not appear
+        // to jump when a warning arrives.
+        let height = text == nil ? HUD.baseHeight : HUD.baseHeight + HUD.statusHeight
+        guard panel.frame.height != height else { return }
+        let origin = panel.frame.origin
+        panel.setFrame(
+            NSRect(x: origin.x, y: origin.y, width: HUD.width, height: height), display: true
+        )
     }
+
+    static let width: CGFloat = 168
+    static let baseHeight: CGFloat = 56
+    static let statusHeight: CGFloat = 14
 }
 
 // MARK: - Pure bits
