@@ -1108,6 +1108,90 @@ do {
     )
 }
 
+// MARK: - Coalescing transform sends
+
+print("TransformSender")
+
+/// An OBS that answers only when told to, so the coalescing is observable
+/// rather than a race.
+@MainActor
+final class SlowOBS {
+    /// cropLeft of each frame that actually reached OBS — the frame's identity.
+    var sent: [Double] = []
+    private var release: CheckedContinuation<Void, Never>?
+
+    func send(_ request: SetSceneItemTransformRequest) async {
+        sent.append(request.sceneItemTransform.cropLeft)
+        await withCheckedContinuation { release = $0 }
+    }
+
+    func answer() { release?.resume(); release = nil }
+}
+
+func frame(_ cropLeft: Double) -> SetSceneItemTransformRequest {
+    var transform = sampleTransform
+    transform.cropLeft = cropLeft
+    return SetSceneItemTransformRequest(
+        scene: SceneName("Scene Browser"), itemId: SceneItemId(3), transform: transform
+    )
+}
+
+/// Let the sender's Task run until it gets where it is going.
+func settle(_ done: () -> Bool) async {
+    for _ in 0..<100 where !done() { await Task.yield() }
+}
+
+do {
+    let obs = SlowOBS()
+    let sender = TransformSender(send: obs.send)
+
+    sender.post(frame(1))
+    await settle { obs.sent.count == 1 }
+    expect(obs.sent == [1], "the first frame goes straight out")
+
+    // Three more arrive while OBS is still chewing on the first.
+    sender.post(frame(2))
+    sender.post(frame(3))
+    sender.post(frame(4))
+    await settle { false }
+    expect(obs.sent == [1], "nothing else is sent while one is in flight")
+
+    obs.answer()
+    await settle { obs.sent.count == 2 }
+    expect(obs.sent == [1, 4], "only the newest waiting frame follows; 2 and 3 were stale")
+
+    // The frame that settles an ease is the one that must not be dropped.
+    obs.answer()
+    await settle { sender.isIdle }
+    expect(sender.isIdle, "with nothing pending the sender goes idle")
+    expect(obs.sent == [1, 4], "and idling sends nothing extra")
+
+    sender.post(frame(5))
+    await settle { obs.sent.count == 3 }
+    expect(obs.sent == [1, 4, 5], "a frame posted after settling still reaches OBS")
+    obs.answer()
+    await settle { sender.isIdle }
+}
+
+do {
+    var failNext = true
+    let sender = TransformSender { _ throws(ObsError) in
+        if failNext { throw .requestFailed(code: 600, comment: "gone") }
+    }
+
+    sender.post(frame(1))
+    await settle { sender.isIdle }
+    expect(
+        sender.lastFailure == .requestFailed(code: 600, comment: "gone"),
+        "a refused frame is recorded rather than thrown at the tick loop"
+    )
+
+    failNext = false
+    sender.post(frame(2))
+    await settle { sender.isIdle }
+    expect(sender.lastFailure == nil, "and cleared by the next frame that lands")
+}
+
 print("")
 if failures == 0 {
     print("all checks passed")
