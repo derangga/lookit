@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var warnings: [ConfigWarning] = []
     private var hud: HUD?
     private var watcher: ConfigWatcher?
+    private var connection: OBSConnection?
+    private var connectionState: Connection = .disconnected(.notStarted)
     private var zoom = 1.0
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -21,10 +23,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildHUD()
         buildStatusItem()
         startWatchingConfig()
+        connect()
     }
 
     func applicationWillTerminate(_: Notification) {
         HotkeyCenter.shared.unregisterAll()
+        connection?.stop()
+    }
+
+    // MARK: - OBS
+
+    private func connect() {
+        let connection = OBSConnection { [weak self] state in
+            self?.connectionState = state
+            self?.refreshMenu()
+        }
+        connection.start(config.obs)
+        self.connection = connection
     }
 
     // MARK: - Config
@@ -75,6 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let delta = changes(from: previous, to: config)
         if delta.keys { installConfiguredHotkeys() }
+        // Fixing a wrong password in the config is the main way out of the
+        // authFailed escape, which has stopped the retry loop for good.
+        if delta.obs { connection?.start(config.obs) }
         if delta.stops {
             hud?.setStops(config.stops)
             hud?.setZoom(zoom)
@@ -150,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()
 
-        menu.addItem(withTitle: "Not connected to OBS", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: connectionState.message, action: nil, keyEquivalent: "")
         menu.item(at: 0)?.isEnabled = false
 
         if !warnings.isEmpty {

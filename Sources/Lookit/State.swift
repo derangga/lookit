@@ -15,6 +15,16 @@ public enum Connection: Equatable, Sendable {
     case identified
 
     public var isUsable: Bool { self == .identified }
+
+    /// What to show the user. Lives here beside the state rather than in the
+    /// menu so the HUD and the menu cannot drift apart.
+    public var message: String {
+        switch self {
+        case .identified: "Connected to OBS"
+        case .connecting: "Connecting to OBS…"
+        case let .disconnected(reason): reason.message
+        }
+    }
 }
 
 public enum DisconnectReason: Equatable, Sendable {
@@ -35,6 +45,18 @@ public enum DisconnectReason: Equatable, Sendable {
         switch self {
         case .authFailed: false
         case .notStarted, .refused, .serverDisabled, .dropped: true
+        }
+    }
+
+    /// Each case says what to do about it. "Disconnected" on its own leaves the
+    /// user with no idea whether to start OBS, tick a box, or fix a password.
+    public var message: String {
+        switch self {
+        case .notStarted: "Not connected to OBS"
+        case .refused: "Waiting for OBS to start"
+        case .serverDisabled: "Enable OBS → Tools → WebSocket Server Settings"
+        case .authFailed: "Wrong password — fix obs.password in the config"
+        case let .dropped(detail): "Reconnecting to OBS — \(detail)"
         }
     }
 }
