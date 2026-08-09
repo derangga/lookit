@@ -629,6 +629,68 @@ do {
     }
 }
 
+// MARK: - State variants
+
+print("state")
+
+do {
+    expect(!DisconnectReason.authFailed.isRetryable, "a wrong password is never retried")
+    expect(DisconnectReason.refused.isRetryable, "a refused connection is retried")
+    expect(DisconnectReason.serverDisabled.isRetryable, "a disabled server is retried")
+    expect(Connection.identified.isUsable, "only identified is usable")
+    expect(!Connection.connecting.isUsable, "connecting is not yet usable")
+}
+
+do {
+    // Each layer scopes the layer below's errors into its own type.
+    expect(UnresolvedReason(TargetError.noCaptureInScene) == .noCaptureInScene, "scoped: no capture")
+    expect(UnresolvedReason(TargetError.windowNotFound(WindowID(384))) == .windowGone, "scoped: window gone")
+    expect(
+        UnresolvedReason(TargetError.ambiguous([InputName("chrome")])) == .ambiguous([InputName("chrome")]),
+        "scoped: ambiguity keeps the candidate names"
+    )
+
+    expect(
+        UnresolvedReason(unsupported: .window(WindowID(1), bundleID: nil)) == nil,
+        "a window binding is not an unsupported reason"
+    )
+    expect(
+        UnresolvedReason(unsupported: .display(uuid: "x")) == .displayCaptureUnsupported,
+        "display capture says so specifically"
+    )
+    expect(
+        UnresolvedReason(unsupported: .unsupported(type: 2)) == .applicationCaptureUnsupported,
+        "application capture says so specifically"
+    )
+
+    // Every reason must be sayable to a human — a bare "unresolved" is useless.
+    let reasons: [UnresolvedReason] = [
+        .notConnected, .noCaptureInScene, .ambiguous([InputName("a")]), .windowGone,
+        .displayCaptureUnsupported, .applicationCaptureUnsupported, .degenerateSource,
+    ]
+    expect(reasons.allSatisfy { !$0.message.isEmpty }, "every unresolved reason has a message")
+}
+
+do {
+    let target = Target(
+        scene: SceneName("Scene Browser"), itemId: SceneItemId(2),
+        inputName: InputName("chrome"), window: WindowID(384),
+        bundleID: "net.imput.helium", transform: sampleTransform
+    )
+    expect(TargetState.resolved(target).target == target, "a resolved state yields its target")
+    expect(TargetState.unresolved(.windowGone).target == nil, "an unresolved state yields none")
+    expect(target.pristine == Pristine(
+        scene: SceneName("Scene Browser"), itemId: SceneItemId(2),
+        inputName: InputName("chrome"), transform: sampleTransform
+    ), "a target knows the Pristine it would journal")
+
+    expect(Dirtiness.clean.pristine == nil, "clean carries no pristine")
+    expect(
+        Dirtiness.dirty(target.pristine).pristine == target.pristine,
+        "dirty always carries the way back — invariant 1 in the type system"
+    )
+}
+
 // MARK: -
 
 print("")
