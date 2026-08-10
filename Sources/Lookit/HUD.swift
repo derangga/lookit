@@ -12,6 +12,8 @@ public final class HUD {
     private let panel: NSPanel
     private let statusLabel = NSTextField(labelWithString: "")
     private let stopsControl = NSSegmentedControl()
+    /// Held rather than built inline so it can be greyed when OBS is absent.
+    private lazy var obsButton = plainButton("video.fill", "Open OBS", #selector(obsTapped))
     /// Kept so a stops reload can restore the selection to where the zoom is.
     private var currentZoom: Double = 1.0
     private let previewBox = NSView()
@@ -24,6 +26,8 @@ public final class HUD {
     /// enum — it is also the config key vocabulary.
     private let jump: (Double) -> Void
     private let onMove: (CGPoint) -> Void
+    private let onQuit: () -> Void
+    private let onActivateOBS: () -> Void
 
     private var stops: [Double] = Config.fallback.stops
     /// Kept so the controls can be greyed out when there is nothing to zoom.
@@ -33,11 +37,15 @@ public final class HUD {
         savedPosition: CGPoint?,
         perform: @escaping (HotkeyAction) -> Void,
         jump: @escaping (Double) -> Void,
-        onMove: @escaping (CGPoint) -> Void
+        onMove: @escaping (CGPoint) -> Void,
+        onQuit: @escaping () -> Void,
+        onActivateOBS: @escaping () -> Void
     ) {
         self.perform = perform
         self.jump = jump
         self.onMove = onMove
+        self.onQuit = onQuit
+        self.onActivateOBS = onActivateOBS
 
         panel = NSPanel(
             // Provisional: buildContent sizes the panel to its content, and
@@ -108,7 +116,16 @@ public final class HUD {
         stopsControl.action = #selector(stopPicked(_:))
         stopsControl.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
 
+        // The gap is deliberate. Quit is the one control here that cannot be
+        // taken back by clicking again, so it does not sit next to the ones
+        // pressed mid-demo.
+        let gap = NSView()
+        gap.setContentHuggingPriority(.init(1), for: .horizontal)
+
         let controls = NSStackView(views: [
+            plainButton("xmark", "Quit lookit", #selector(quitTapped)),
+            gap,
+            obsButton,
             button("arrow.counterclockwise", .reset),
             stopsControl,
         ])
@@ -116,7 +133,11 @@ public final class HUD {
         controls.spacing = 8
         controls.alignment = .centerY
 
-        let stack = NSStackView(views: [buildPreview(), controls])
+        let preview = buildPreview()
+        let stack = NSStackView(views: [preview, controls])
+        // Without this the row shrinks to its content and centres, and the gap
+        // has no slack to push quit away from the cluster.
+        controls.widthAnchor.constraint(equalTo: preview.widthAnchor).isActive = true
         stack.orientation = .vertical
         stack.spacing = 4
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 10)
@@ -194,6 +215,28 @@ public final class HUD {
         mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
         mask.resizingMode = .stretch
         return mask
+    }
+
+    /// A button that is not one of the three zoom actions, so it stays enabled
+    /// when there is nothing to zoom — quitting and opening OBS are exactly what
+    /// you want to reach when the target will not resolve.
+    private func plainButton(_ symbol: String, _ help: String, _ action: Selector) -> NSButton {
+        let button = NSButton()
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.toolTip = help
+        button.target = self
+        button.action = action
+        return button
+    }
+
+    @objc private func quitTapped() { onQuit() }
+    @objc private func obsTapped() { onActivateOBS() }
+
+    /// Grey the OBS button when OBS is not installed, since nothing would open.
+    public func setOBSAvailable(_ available: Bool) {
+        obsButton.isEnabled = available
     }
 
     private func button(_ symbol: String, _ action: HotkeyAction) -> NSButton {

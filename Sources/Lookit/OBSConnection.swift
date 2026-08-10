@@ -391,7 +391,7 @@ public func identifyAuthentication(password: String, salt: String, challenge: St
 
 // MARK: - Is OBS even running
 
-let obsBundleIdentifier = "com.obsproject.obs-studio"
+public let obsBundleIdentifier = "com.obsproject.obs-studio"
 
 /// Used only to tell "OBS is not running" apart from "its server is off", which
 /// look identical at the socket.

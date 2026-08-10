@@ -255,7 +255,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             savedPosition: saved,
             perform: { [weak self] action in self?.perform(action) },
             jump: { [weak self] stop in self?.apply(zoom: stop, because: "stop") },
-            onMove: { [weak self] origin in self?.saveHUDPosition(origin) }
+            onMove: { [weak self] origin in self?.saveHUDPosition(origin) },
+            onQuit: { [weak self] in self?.quit() },
+            onActivateOBS: { [weak self] in self?.activateOBS() }
+        )
+        hud.setOBSAvailable(
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: obsBundleIdentifier) != nil
         )
         hud.setStops(config.stops)
         hud.setZoom(zoom)
@@ -502,8 +507,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher?.reloadNow()
     }
 
+    /// Put the framing back, then go.
+    ///
+    /// applicationWillTerminate deliberately does not do this — it cannot await
+    /// a round trip, and the journal plus restore-on-launch is the safety net.
+    /// A button is not that notification: it can spend the 0.27ms and hand the
+    /// layout back before the process goes down, which matters now that quit is
+    /// one click on a panel floating over a live demo rather than a menu item
+    /// clicked once a day.
+    ///
+    /// If OBS is unreachable the release fails fast and the journal still
+    /// restores on next launch, so this only ever improves on terminating flat.
     @objc private func quit() {
-        NSApp.terminate(nil)
+        Task { [weak self] in
+            await self?.releaseScope()
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Bring OBS forward, launching it if it is not running — what clicking its
+    /// Dock icon would do.
+    @objc private func activateOBS() {
+        guard
+            let url = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: obsBundleIdentifier
+            )
+        else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: .init())
     }
 }
 
