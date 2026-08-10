@@ -62,7 +62,10 @@ main
     → obs.getSceneItemList
     → pickCaptureItem                // pure — skips camera by kind
     → obs.getInputSettings
+    → captureBinding                 // pure
+    → obs.getSceneItemTransform      // the candidate Pristine, and the source size
     → locateWindow                   // boundary
+    → matchesSource                  // pure — is this really OBS's window?
   → installHotkeys
   → showHUD
   → startTick

@@ -114,6 +114,9 @@ public enum UnresolvedReason: Equatable, Sendable {
     case applicationCaptureUnsupported
     /// OBS reported a source with no usable dimensions.
     case degenerateSource
+    /// OBS refused a request while resolving — the scene or item changed under
+    /// us, usually. Carries OBS's own words rather than guessing.
+    case obsRefused(String)
 
     public var message: String {
         switch self {
@@ -125,6 +128,7 @@ public enum UnresolvedReason: Equatable, Sendable {
         case .displayCaptureUnsupported: "Display capture is not supported yet"
         case .applicationCaptureUnsupported: "Application capture is not supported yet"
         case .degenerateSource: "OBS reports no size for this source"
+        case let .obsRefused(detail): "OBS refused: \(detail)"
         }
     }
 }

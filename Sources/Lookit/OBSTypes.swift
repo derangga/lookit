@@ -142,6 +142,28 @@ public struct CaptureSettings: Decodable, Sendable {
 
 // MARK: - Requests
 
+/// The scene a request is about.
+public struct SceneRequest: Encodable, Sendable {
+    public let sceneName: String
+    public init(_ scene: SceneName) { sceneName = scene.raw }
+}
+
+/// The input a request is about.
+public struct InputRequest: Encodable, Sendable {
+    public let inputName: String
+    public init(_ name: InputName) { inputName = name.raw }
+}
+
+/// One scene item, addressed the way OBS addresses it.
+public struct SceneItemRequest: Encodable, Sendable {
+    public let sceneName: String
+    public let sceneItemId: Int
+    public init(scene: SceneName, itemId: SceneItemId) {
+        sceneName = scene.raw
+        sceneItemId = itemId.raw
+    }
+}
+
 /// The only write lookit ever makes to a scene.
 ///
 /// OBS accepts a whole transform back verbatim, read-only fields and all —

@@ -18,8 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var connection: OBSConnection?
     private var connectionState: Connection = .disconnected(.notStarted)
     private var obsVersion: String?
-    /// Nil until target resolution exists — which is blocked on the user
-    /// re-picking the window in OBS. hudStatus reads nil as "nothing to say".
+    /// Nil until the first resolve runs. hudStatus reads nil as "nothing to
+    /// say about the target yet", which is different from unresolved.
     private var target: TargetState?
     private var zoom = 1.0
 
@@ -60,7 +60,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             await self?.restoreDirtyLayout()
             await self?.readVersion()
+            await self?.resolve()
         }
+    }
+
+    /// Find what to zoom. Runs on connect and after every scene change; both
+    /// are the only moments the answer can change.
+    private func resolve() async {
+        guard let connection else { return }
+        target = await resolveTarget(
+            connection: connection, locate: WindowLocator.unverified.locate, owner: windowOwner
+        )
+        let described = switch target {
+        case let .resolved(t): "target \(t.inputName.raw) #\(t.itemId.raw) window \(t.window.raw) \(t.bundleID ?? "?")"
+        case let .unresolved(reason): "no target — \(reason.message)"
+        case nil: "no target"
+        }
+        FileHandle.standardError.write(Data("lookit: \(described)\n".utf8))
+        refresh()
     }
 
     /// Once per launch, not once per connection. A journal written by *this*
@@ -85,18 +102,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Releasing the outgoing target and resolving the new one is its own bead,
-    /// and needs a journal that does not exist yet. Until then this proves the
-    /// event actually arrives — which is the part the socket is responsible for.
+    /// Releasing the outgoing target before acquiring the new one — invariant 2 —
+    /// is its own bead and needs a dirty scope that does not exist yet. Nothing
+    /// is ever dirty today, so re-resolving is the whole handler for now.
     private func handle(_ event: ObsEvent) {
         switch event {
         case let .sceneChanged(scene):
             FileHandle.standardError.write(Data("lookit: scene → \(scene.raw)\n".utf8))
+            Task { [weak self] in await self?.resolve() }
         }
     }
 
-    /// The first real round-trip. Target resolution is the next bead; until then
-    /// this is what proves op 6 out and op 7 back actually correlate.
+    /// Shown in the menu, and the cheapest possible proof the round-trip works.
     private func readVersion() async {
         guard let connection else { return }
         let version = try? await connection.call("GetVersion", NoBody(), as: ObsVersion.self)
