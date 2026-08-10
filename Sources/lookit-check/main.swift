@@ -796,16 +796,18 @@ do {
 }
 
 do {
-    expect(stopsRuler(stops: [1, 1.5, 2, 3], current: 1) == "●1 · 1.5 · 2 · 3", "the ruler marks 1x")
+    let stops = [1.0, 1.5, 2, 3]
+
+    expect(stopLabel(1) == "1", "a whole stop drops the decimal")
+    expect(stopLabel(1.5) == "1.5", "a fractional stop keeps it")
+
+    expect(nearestStopIndex(stops: stops, current: 1) == 0, "the row highlights 1x")
+    expect(nearestStopIndex(stops: stops, current: 2) == 2, "and the current stop")
     expect(
-        stopsRuler(stops: [1, 1.5, 2, 3], current: 2) == "1 · 1.5 · ●2 · 3",
-        "and marks the current stop"
+        nearestStopIndex(stops: stops, current: 1.9) == 2,
+        "mid-ease it highlights the nearest stop rather than going blank"
     )
-    expect(
-        stopsRuler(stops: [1, 1.5, 2, 3], current: 1.9) == "1 · 1.5 · ●2 · 3",
-        "mid-animation it marks the nearest stop rather than going blank"
-    )
-    expect(stopsRuler(stops: [], current: 1) == "", "no stops renders nothing")
+    expect(nearestStopIndex(stops: [], current: 1) == nil, "no stops highlights nothing")
 }
 
 // MARK: - Hot-reload change detection

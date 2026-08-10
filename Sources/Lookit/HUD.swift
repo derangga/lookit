@@ -10,14 +10,19 @@ import LookitCore
 @MainActor
 public final class HUD {
     private let panel: NSPanel
-    private let zoomLabel = NSTextField(labelWithString: "1.0×")
-    private let stopsLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
+    private let stopsControl = NSSegmentedControl()
+    /// Kept so a stops reload can restore the selection to where the zoom is.
+    private var currentZoom: Double = 1.0
     private let previewBox = NSView()
     private let previewView = NSImageView()
     /// Swapped whenever the canvas shape changes, so the box always matches it.
     private var previewAspect: NSLayoutConstraint?
     private let perform: (HotkeyAction) -> Void
+    /// Go straight to a stop. Separate from `perform` because a stop is a value,
+    /// not one of the three named actions, and HotkeyAction must stay a plain
+    /// enum — it is also the config key vocabulary.
+    private let jump: (Double) -> Void
     private let onMove: (CGPoint) -> Void
 
     private var stops: [Double] = Config.fallback.stops
@@ -27,9 +32,11 @@ public final class HUD {
     public init(
         savedPosition: CGPoint?,
         perform: @escaping (HotkeyAction) -> Void,
+        jump: @escaping (Double) -> Void,
         onMove: @escaping (CGPoint) -> Void
     ) {
         self.perform = perform
+        self.jump = jump
         self.onMove = onMove
 
         panel = NSPanel(
@@ -95,23 +102,21 @@ public final class HUD {
         // shapes the material.
         background.maskImage = roundedMask(radius: 12)
 
-        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
-        zoomLabel.alignment = .center
-        stopsLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-        stopsLabel.textColor = .secondaryLabelColor
-        stopsLabel.alignment = .center
+        stopsControl.segmentStyle = .rounded
+        stopsControl.trackingMode = .selectOne
+        stopsControl.target = self
+        stopsControl.action = #selector(stopPicked(_:))
+        stopsControl.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
 
         let controls = NSStackView(views: [
-            button("minus", .zoomOut),
-            zoomLabel,
-            button("plus", .zoomIn),
             button("arrow.counterclockwise", .reset),
+            stopsControl,
         ])
         controls.orientation = .horizontal
         controls.spacing = 8
         controls.alignment = .centerY
 
-        let stack = NSStackView(views: [buildPreview(), controls, stopsLabel])
+        let stack = NSStackView(views: [buildPreview(), controls])
         stack.orientation = .vertical
         stack.spacing = 4
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 10)
@@ -208,6 +213,11 @@ public final class HUD {
         perform(HotkeyAction.allCases[sender.tag])
     }
 
+    @objc private func stopPicked(_ sender: NSSegmentedControl) {
+        guard stops.indices.contains(sender.selectedSegment) else { return }
+        jump(stops[sender.selectedSegment])
+    }
+
     // MARK: - Position
 
     private func position(_ saved: CGPoint?) {
@@ -236,20 +246,29 @@ public final class HUD {
 
     public func setStops(_ stops: [Double]) {
         self.stops = stops
+        stopsControl.segmentCount = stops.count
+        for (index, stop) in stops.enumerated() {
+            stopsControl.setLabel(stopLabel(stop), forSegment: index)
+            // 0 means "fit the label", which keeps the row honest when a config
+            // supplies more stops than the default four.
+            stopsControl.setWidth(0, forSegment: index)
+        }
+        setZoom(currentZoom)
     }
 
     public func setZoom(_ zoom: Double) {
-        zoomLabel.stringValue = String(format: "%.1f×", zoom)
-        stopsLabel.stringValue = stopsRuler(stops: stops, current: zoom)
+        currentZoom = zoom
+        guard let index = nearestStopIndex(stops: stops, current: zoom) else { return }
+        stopsControl.selectedSegment = index
     }
 
     /// Grey the controls when there is nothing to zoom.
     ///
-    /// The status line already says *why*; this says *that*, so a dead keypress
-    /// reads as refused rather than broken.
+    /// The preview already says *why*; this says *that*, so a dead click reads
+    /// as refused rather than broken.
     public func setZoomEnabled(_ enabled: Bool) {
         for button in buttons { button.isEnabled = enabled }
-        zoomLabel.textColor = enabled ? .labelColor : .disabledControlTextColor
+        stopsControl.isEnabled = enabled
     }
 
     /// Say what is wrong, in the preview's place.
@@ -324,19 +343,19 @@ public func hudOrigin(
     )
 }
 
-/// A one-line ruler of the configured stops with the current one marked.
+/// How a stop is written on its button: `1`, `1.5`, `2`, `3`.
 ///
-///     1 · 1.5 ·●· 3
-public func stopsRuler(stops: [Double], current: Double) -> String {
-    guard !stops.isEmpty else { return "" }
+/// Whole numbers lose the decimal because a row of `1.0 1.5 2.0 3.0` is wider
+/// and no clearer.
+public func stopLabel(_ stop: Double) -> String {
+    stop == stop.rounded()
+        ? String(format: "%.0f", stop) : String(format: "%.1f", stop)
+}
 
-    // Nearest rather than exact: mid-animation the zoom sits between stops, and
-    // the marker should still show where it is heading.
-    let nearest = stops.min { abs($0 - current) < abs($1 - current) }
-
-    return stops.map { stop in
-        let text = stop == stop.rounded() ? String(format: "%.0f", stop) : String(format: "%.1f", stop)
-        return stop == nearest ? "●\(text)" : text
-    }
-    .joined(separator: " · ")
+/// Which stop the row should show as current, or nil when there are no stops.
+///
+/// Nearest rather than exact: mid-ease the zoom sits between stops, and the
+/// highlight should still show where it is heading rather than blanking.
+public func nearestStopIndex(stops: [Double], current: Double) -> Int? {
+    stops.indices.min { abs(stops[$0] - current) < abs(stops[$1] - current) }
 }

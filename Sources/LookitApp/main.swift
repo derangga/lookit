@@ -254,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hud = HUD(
             savedPosition: saved,
             perform: { [weak self] action in self?.perform(action) },
+            jump: { [weak self] stop in self?.apply(zoom: stop, because: "stop") },
             onMove: { [weak self] origin in self?.saveHUDPosition(origin) }
         )
         hud.setStops(config.stops)
@@ -276,14 +277,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// go through them — so the refusal lives here, where the tick loop will
     /// share it. No Target, no reframe: not a partial one, not a crop applied
     /// with nothing to restore it from.
+    /// One of the three named actions: work out which stop it means, then go.
     private func perform(_ action: HotkeyAction) {
-        guard let target = target?.target, let scope else {
-            FileHandle.standardError.write(
-                Data("lookit: \(action.rawValue) ignored — nothing to zoom\n".utf8)
-            )
-            return
-        }
-
         let resting = config.stops.first ?? 1.0
         // From where the zoom actually is — the loop owns that once it is
         // running — so a keypress mid-ease advances rather than snapping back.
@@ -294,6 +289,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .zoomOut: nextStop(stops: config.stops, from: current, direction: -1)
             case .reset: resting
             }
+        apply(zoom: next, because: action.rawValue)
+    }
+
+    /// Go to a zoom level, whatever asked for it.
+    ///
+    /// The one path to a reframe: hotkeys arrive through `perform`, the HUD's
+    /// stop buttons come straight here. Anything that needs to happen on every
+    /// zoom change belongs in this function, not in its callers.
+    private func apply(zoom next: Double, because reason: String) {
+        guard let target = target?.target, let scope else {
+            FileHandle.standardError.write(
+                Data("lookit: \(reason) ignored — nothing to zoom\n".utf8)
+            )
+            return
+        }
+
+        let resting = config.stops.first ?? 1.0
 
         // Invariant 1, and the reason this runs before `zoom` is assigned: the
         // tick loop reframes from the zoom level, so a durable pristine must
@@ -318,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         FileHandle.standardError.write(
-            Data("lookit: \(action.rawValue) → \(next)× on \(pristine.inputName.raw)\n".utf8)
+            Data("lookit: \(reason) → \(next)× on \(pristine.inputName.raw)\n".utf8)
         )
         let loop = self.loop ?? makeLoop()
         self.loop = loop
