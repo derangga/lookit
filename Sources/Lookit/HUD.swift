@@ -83,9 +83,11 @@ public final class HUD {
         background.material = .hudWindow
         background.state = .active
         background.blendingMode = .behindWindow
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 12
-        background.layer?.masksToBounds = true
+        // maskImage, not layer.cornerRadius: a .behindWindow material is
+        // composited by the window server outside the layer tree, so rounding
+        // the layer leaves the blur itself square. This is the only knob that
+        // shapes the material.
+        background.maskImage = roundedMask(radius: 12)
 
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
         zoomLabel.alignment = .center
@@ -128,6 +130,23 @@ public final class HUD {
 
         panel.contentView = background
         statusLabel.isHidden = true
+    }
+
+    /// A resizable rounded-rectangle mask for shaping the material.
+    ///
+    /// Cap insets are what let one small image shape any panel size: the four
+    /// corners are drawn once and the middle is stretched, so the rounding
+    /// survives the panel resizing when a status line arrives.
+    private func roundedMask(radius: CGFloat) -> NSImage {
+        let side = radius * 2 + 1
+        let mask = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        mask.resizingMode = .stretch
+        return mask
     }
 
     private func button(_ symbol: String, _ action: HotkeyAction) -> NSButton {
