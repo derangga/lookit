@@ -1633,6 +1633,66 @@ do {
     )
 }
 
+// MARK: - Choosing between several captures
+
+print("pickCaptureItem preferring")
+
+do {
+    let browser = SceneItemSummary(
+        id: SceneItemId(3), inputName: InputName("chrome"), kind: InputKind("screen_capture")
+    )
+    let terminal = SceneItemSummary(
+        id: SceneItemId(1), inputName: InputName("terminal"), kind: InputKind("screen_capture")
+    )
+    let camera = SceneItemSummary(
+        id: SceneItemId(5), inputName: InputName("camera"), kind: InputKind("macos-avcapture")
+    )
+    let both = [browser, terminal, camera]
+
+    do {
+        _ = try pickCaptureItem(both)
+        expect(false, "two captures with no preference must stay the user's choice")
+    } catch {
+        expect(
+            error == .ambiguous([InputName("chrome"), InputName("terminal")]),
+            "and the camera is not among the candidates offered"
+        )
+    }
+
+    do {
+        let chosen = try pickCaptureItem(both, preferring: InputName("terminal"))
+        expect(chosen.id == SceneItemId(1), "a preference resolves the ambiguity")
+    } catch {
+        expect(false, "a valid preference must resolve: \(error)")
+    }
+
+    // A preference left over from a scene that has changed must ask again
+    // rather than resolving to nothing.
+    do {
+        _ = try pickCaptureItem(both, preferring: InputName("gone"))
+        expect(false, "a stale preference must not resolve")
+    } catch {
+        expect(
+            error == .ambiguous([InputName("chrome"), InputName("terminal")]),
+            "it asks again instead"
+        )
+    }
+
+    // A preference must never override the only sensible answer, nor invent one.
+    do {
+        let only = try pickCaptureItem([browser, camera], preferring: InputName("terminal"))
+        expect(only.id == SceneItemId(3), "one capture is picked whatever the preference says")
+    } catch {
+        expect(false, "a single capture must resolve: \(error)")
+    }
+    do {
+        _ = try pickCaptureItem([camera], preferring: InputName("camera"))
+        expect(false, "a camera is never a capture, preference or not — invariant 3")
+    } catch {
+        expect(error == .noCaptureInScene, "and the scene reads as having none")
+    }
+}
+
 print("")
 if failures == 0 {
     print("all checks passed")

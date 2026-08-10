@@ -20,6 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sender: TransformSender?
     private var tickTask: Task<Void, Never>?
     private var loop: TickLoop?
+    /// Which capture the user picked, per scene, when a scene had several.
+    ///
+    /// In memory only: a scene with two captures is rare, the choice is one
+    /// click, and persisting it would mean a config schema for something that
+    /// may never be used twice.
+    private var preferred: [SceneName: InputName] = [:]
     private var connectionState: Connection = .disconnected(.notStarted)
     private var obsVersion: String?
     /// Nil until the first resolve runs. hudStatus reads nil as "nothing to
@@ -86,7 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func resolve() async {
         guard let connection else { return }
         target = await resolveTarget(
-            connection: connection, locate: WindowLocator.unverified.locate, owner: windowOwner
+            connection: connection, locate: WindowLocator.unverified.locate, owner: windowOwner,
+            preferring: { [weak self] scene in self?.preferred[scene] }
         )
         let described = switch target {
         case let .resolved(t): "target \(t.inputName.raw) #\(t.itemId.raw) window \(t.window.raw) \(t.bundleID ?? "?")"
@@ -396,6 +403,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
         menu.item(at: 0)?.isEnabled = false
 
+        // A scene with several captures is the user's choice to make, so make it
+        // makeable rather than only reporting the deadlock.
+        if case let .unresolved(.ambiguous(names)) = target {
+            menu.addItem(.separator())
+            for name in names {
+                let item = NSMenuItem(
+                    title: "Zoom \(name.raw)", action: #selector(choose(_:)), keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = name.raw
+                menu.addItem(item)
+            }
+        }
+
         if !warnings.isEmpty {
             menu.addItem(.separator())
             for warning in warnings {
@@ -417,6 +438,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit lookit", action: #selector(quit), keyEquivalent: "q").target =
             self
+    }
+
+    @objc private func choose(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        Task { [weak self] in
+            guard let self, let connection else { return }
+            // The scene the choice belongs to is whichever one is live now.
+            let scene = try? await connection.call(
+                "GetCurrentProgramScene", NoBody(), as: CurrentSceneResponse.self
+            ).sceneName
+            guard let scene else { return }
+            preferred[scene] = InputName(raw)
+            await resolve()
+        }
     }
 
     @objc private func editConfig() {

@@ -19,7 +19,8 @@ import LookitCore
 public func resolveTarget(
     connection: OBSConnection,
     locate: (WindowID) -> CaptureRect?,
-    owner: (WindowID) -> String?
+    owner: (WindowID) -> String?,
+    preferring: (SceneName) -> InputName? = { _ in nil }
 ) async -> TargetState {
     guard connection.state.isUsable else { return .unresolved(.notConnected) }
 
@@ -31,7 +32,7 @@ public func resolveTarget(
         let items = try await connection.call(
             "GetSceneItemList", SceneRequest(scene), as: SceneItemListResponse.self
         )
-        let item = try pickCaptureItem(items.summaries)
+        let item = try pickCaptureItem(items.summaries, preferring: preferring(scene))
 
         let input = try await connection.call(
             "GetInputSettings", InputRequest(item.inputName), as: InputSettingsResponse.self
