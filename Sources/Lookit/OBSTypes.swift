@@ -135,11 +135,14 @@ public struct VideoSettingsResponse: Decodable, Sendable {
 /// Screenshotting the input instead would return the source untransformed and
 /// the preview would never show the zoom.
 ///
-/// 240 wide at quality 60 measured 4.0ms and 7.6 KB against a 2992×1858 canvas.
+/// Twice `HUD.previewWidth`, because the panel draws on a Retina display and a
+/// point-for-pixel image reads soft. Measured against a 2992×1858 canvas:
+/// 240 wide was 4.0ms and 7.6 KB, 480 wide 6.8ms and 18.7 KB — so this sits
+/// near the upper figure, still an order of magnitude under the 500ms interval.
 public struct ScreenshotRequest: Encodable, Sendable {
     public let sourceName: String
     public let imageFormat = "jpg"
-    public let imageWidth = 240
+    public let imageWidth = 560
     public let imageCompressionQuality = 60
 
     public init(scene: SceneName) {

@@ -110,7 +110,8 @@ public final class HUD {
         // shapes the material.
         background.maskImage = roundedMask(radius: 12)
 
-        stopsControl.segmentStyle = .rounded
+        stopsControl.segmentStyle = .texturedRounded
+        stopsControl.controlSize = .large
         stopsControl.trackingMode = .selectOne
         // Click-only. A focusable control here would let a stray keystroke
         // reframe the shot, which is the same promise .nonactivatingPanel makes
@@ -118,7 +119,9 @@ public final class HUD {
         stopsControl.refusesFirstResponder = true
         stopsControl.target = self
         stopsControl.action = #selector(stopPicked(_:))
-        stopsControl.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        stopsControl.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        stopsControl.translatesAutoresizingMaskIntoConstraints = false
+        stopsControl.heightAnchor.constraint(equalToConstant: HUD.controlHeight).isActive = true
 
         // The gap is deliberate. Quit is the one control here that cannot be
         // taken back by clicking again, so it does not sit next to the ones
@@ -227,13 +230,35 @@ public final class HUD {
     private func plainButton(_ symbol: String, _ help: String, _ action: Selector) -> NSButton {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
-        button.isBordered = false
-        button.bezelStyle = .inline
         button.toolTip = help
-        button.refusesFirstResponder = true
         button.target = self
         button.action = action
+        style(button)
         return button
+    }
+
+    /// The shared look: a real bezel and a target big enough to hit without
+    /// aiming, on a panel that floats over a live demo.
+    ///
+    /// `.texturedRounded` rather than the default push-button bezel, which
+    /// renders as a light system control pasted onto a dark `.hudWindow` blur.
+    /// The symbol configuration matters as much as the size — a bigger button
+    /// alone just centres a small glyph in a large bezel.
+    private func style(_ button: NSButton) {
+        button.isBordered = true
+        button.bezelStyle = .texturedRounded
+        button.imageScaling = .scaleProportionallyDown
+        button.symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: 13, weight: .medium
+        )
+        // Not cosmetic: a focusable control here lets a stray keystroke reframe
+        // the shot, which is the promise .nonactivatingPanel makes about clicks.
+        button.refusesFirstResponder = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: HUD.controlHeight + 6),
+            button.heightAnchor.constraint(equalToConstant: HUD.controlHeight),
+        ])
     }
 
     @objc private func quitTapped() { onQuit() }
@@ -248,12 +273,11 @@ public final class HUD {
         let button = NSButton()
         defer { buttons.append(button) }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.refusesFirstResponder = true
+        button.toolTip = action.rawValue
         button.target = self
         button.action = #selector(tapped(_:))
         button.tag = HotkeyAction.allCases.firstIndex(of: action) ?? 0
+        style(button)
         return button
     }
 
@@ -364,7 +388,10 @@ public final class HUD {
         panel.setFrame(NSRect(origin: panel.frame.origin, size: size), display: true)
     }
 
-    static let previewWidth: CGFloat = 240
+    /// Wide enough for four bezelled controls without squeezing the preview,
+    /// which is what should set the panel's width.
+    static let previewWidth: CGFloat = 280
+    static let controlHeight: CGFloat = 26
     /// 16:9 until OBS says otherwise.
     static let defaultCanvasAspect: Double = 16.0 / 9.0
 }
