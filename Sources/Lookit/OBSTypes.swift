@@ -128,6 +128,30 @@ public struct VideoSettingsResponse: Decodable, Sendable {
     public let baseHeight: Int
 }
 
+/// A frame of the program scene for the HUD's preview.
+///
+/// Naming a **scene** rather than an input is the whole point: OBS renders it
+/// composited, so the scene item transform — lookit's crop — is in the picture.
+/// Screenshotting the input instead would return the source untransformed and
+/// the preview would never show the zoom.
+///
+/// 240 wide at quality 60 measured 4.0ms and 7.6 KB against a 2992×1858 canvas.
+public struct ScreenshotRequest: Encodable, Sendable {
+    public let sourceName: String
+    public let imageFormat = "jpg"
+    public let imageWidth = 240
+    public let imageCompressionQuality = 60
+
+    public init(scene: SceneName) {
+        sourceName = scene.raw
+    }
+}
+
+public struct ScreenshotResponse: Decodable, Sendable {
+    /// A `data:image/jpg;base64,…` URI, not raw bytes.
+    public let imageData: String
+}
+
 public struct SceneItemTransformResponse: Decodable, Sendable {
     public let sceneItemTransform: Transform
 }

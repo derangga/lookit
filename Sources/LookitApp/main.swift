@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = Config.fallback
     private var warnings: [ConfigWarning] = []
     private var hud: HUD?
+    private var preview: PreviewFeed?
     private var watcher: ConfigWatcher?
     private var connection: OBSConnection?
     private var scope: DirtyScope?
@@ -47,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// exists to consume. Trying to be tidy here would risk a half-write.
     func applicationWillTerminate(_: Notification) {
         HotkeyCenter.shared.unregisterAll()
+        preview?.stop()
         connection?.stop()
     }
 
@@ -76,6 +78,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sender = TransformSender { request throws(ObsError) in
             try await connection.call("SetSceneItemTransform", request)
         }
+
+        // Reads the scene lookit already resolved rather than asking OBS for it
+        // every frame, so a frame costs one round trip and not two.
+        let preview = PreviewFeed(
+            connection: connection,
+            scene: { [weak self] in self?.target?.target?.scene },
+            show: { [weak self] image, dimmed in self?.hud?.setPreview(image, dimmed: dimmed) }
+        )
+        preview.start()
+        self.preview = preview
     }
 
     /// Restore comes before anything else touches the scene, per §2.
@@ -303,6 +315,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stop buttons come straight here. Anything that needs to happen on every
     /// zoom change belongs in this function, not in its callers.
     private func apply(zoom next: Double, because reason: String) {
+        // The framing is about to move, so look more often for a moment. Here
+        // rather than in the tick loop: this fires once per press, that runs at
+        // 30Hz for the whole time the shot is zoomed.
+        preview?.bump()
+
         guard let target = target?.target, let scope else {
             FileHandle.standardError.write(
                 Data("lookit: \(reason) ignored — nothing to zoom\n".utf8)

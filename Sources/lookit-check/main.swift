@@ -810,6 +810,31 @@ do {
     expect(nearestStopIndex(stops: [], current: 1) == nil, "no stops highlights nothing")
 }
 
+print("imageData(fromDataURI:)")
+
+do {
+    // What OBS actually sends: a data URI, not raw bytes.
+    let payload = Data("lookit".utf8).base64EncodedString()
+    expect(
+        imageData(fromDataURI: "data:image/jpg;base64,\(payload)") == Data("lookit".utf8),
+        "the bytes after the comma are what comes back"
+    )
+    expect(
+        imageData(fromDataURI: "data:image/png;base64,") == Data(),
+        "an empty payload decodes to nothing rather than failing"
+    )
+
+    // Untrusted input from the socket. Decoding something is not the same as
+    // having been given an image.
+    expect(imageData(fromDataURI: payload) == nil, "bare base64 with no data: prefix is refused")
+    expect(imageData(fromDataURI: "data:image/jpg;base64") == nil, "no comma is refused")
+    expect(imageData(fromDataURI: "") == nil, "empty is refused")
+    expect(
+        imageData(fromDataURI: "data:image/jpg;base64,not valid base64!") == nil,
+        "an undecodable payload is refused rather than returning junk"
+    )
+}
+
 // MARK: - Hot-reload change detection
 
 print("changes(from:to:)")

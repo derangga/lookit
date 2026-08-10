@@ -112,6 +112,10 @@ public final class HUD {
 
         stopsControl.segmentStyle = .rounded
         stopsControl.trackingMode = .selectOne
+        // Click-only. A focusable control here would let a stray keystroke
+        // reframe the shot, which is the same promise .nonactivatingPanel makes
+        // about clicks — observed changing the zoom from a synthetic keypress.
+        stopsControl.refusesFirstResponder = true
         stopsControl.target = self
         stopsControl.action = #selector(stopPicked(_:))
         stopsControl.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -226,6 +230,7 @@ public final class HUD {
         button.isBordered = false
         button.bezelStyle = .inline
         button.toolTip = help
+        button.refusesFirstResponder = true
         button.target = self
         button.action = action
         return button
@@ -245,6 +250,7 @@ public final class HUD {
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)
         button.isBordered = false
         button.bezelStyle = .inline
+        button.refusesFirstResponder = true
         button.target = self
         button.action = #selector(tapped(_:))
         button.tag = HotkeyAction.allCases.firstIndex(of: action) ?? 0
@@ -323,6 +329,13 @@ public final class HUD {
         statusLabel.isHidden = text == nil
         statusLabel.toolTip = text  // the full text, since three lines can truncate
         previewView.isHidden = text != nil
+    }
+
+    /// A frame, or nil for none. `dimmed` marks a frame that has stopped
+    /// updating, so a stale picture cannot pass for a live one.
+    public func setPreview(_ image: NSImage?, dimmed: Bool) {
+        previewView.image = image
+        previewView.alphaValue = dimmed ? 0.4 : 1.0
     }
 
     /// Shape the preview to the OBS canvas, so what is framed here is what goes
