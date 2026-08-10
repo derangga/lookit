@@ -16,6 +16,9 @@ public final class HUD {
     private lazy var obsButton = plainButton("video.fill", "Open OBS", #selector(obsTapped))
     /// Kept so a stops reload can restore the selection to where the zoom is.
     private var currentZoom: Double = 1.0
+    /// The stop picker's own height, measured at build time. Every icon button
+    /// is this square, so the row lines up whatever metrics AppKit picks.
+    private var controlSide: CGFloat = 24
     private let previewBox = NSView()
     private let previewView = NSImageView()
     /// Swapped whenever the canvas shape changes, so the box always matches it.
@@ -121,7 +124,12 @@ public final class HUD {
         stopsControl.action = #selector(stopPicked(_:))
         stopsControl.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         stopsControl.translatesAutoresizingMaskIntoConstraints = false
-        stopsControl.heightAnchor.constraint(equalToConstant: HUD.controlHeight).isActive = true
+
+        // Measured before any button is built, because `style` needs it. A
+        // segment has to exist for the control to report a sensible height.
+        stopsControl.segmentCount = 1
+        stopsControl.setLabel("1", forSegment: 0)
+        controlSide = stopsControl.intrinsicContentSize.height
 
         // The gap is deliberate. Quit is the one control here that cannot be
         // taken back by clicking again, so it does not sit next to the ones
@@ -237,16 +245,28 @@ public final class HUD {
         return button
     }
 
-    /// The shared look: a real bezel and a target big enough to hit without
-    /// aiming, on a panel that floats over a live demo.
+    /// The shared look: a square, visibly bordered target on a dark panel.
     ///
-    /// `.texturedRounded` rather than the default push-button bezel, which
-    /// renders as a light system control pasted onto a dark `.hudWindow` blur.
-    /// The symbol configuration matters as much as the size — a bigger button
-    /// alone just centres a small glyph in a large bezel.
+    /// Drawn rather than bezelled. Every AppKit bezel is designed against the
+    /// system control background — `.texturedRounded` all but disappears on a
+    /// `.hudWindow` blur — so the chrome is a layer instead.
+    ///
+    /// The size comes **from the stop picker**, measured rather than guessed. A
+    /// segmented control keeps its own metrics whatever you constrain it to, so
+    /// picking a number to match it goes stale the moment AppKit changes them.
+    ///
+    /// Measured, not constrained: an `equalTo: stopsControl.heightAnchor` here
+    /// is activated while neither view is in a hierarchy yet, and anchors with
+    /// no common ancestor cannot be activated — which launched a window-less
+    /// process that sat in the run loop printing nothing.
     private func style(_ button: NSButton) {
-        button.isBordered = true
-        button.bezelStyle = .texturedRounded
+        button.isBordered = false
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 6
+        button.layer?.borderWidth = 1
+        button.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        button.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        button.contentTintColor = .white
         button.imageScaling = .scaleProportionallyDown
         button.symbolConfiguration = NSImage.SymbolConfiguration(
             pointSize: 13, weight: .medium
@@ -256,8 +276,8 @@ public final class HUD {
         button.refusesFirstResponder = true
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(greaterThanOrEqualToConstant: HUD.controlHeight + 6),
-            button.heightAnchor.constraint(equalToConstant: HUD.controlHeight),
+            button.heightAnchor.constraint(equalToConstant: controlSide),
+            button.widthAnchor.constraint(equalToConstant: controlSide),
         ])
     }
 
@@ -322,9 +342,9 @@ public final class HUD {
         stopsControl.segmentCount = stops.count
         for (index, stop) in stops.enumerated() {
             stopsControl.setLabel(stopLabel(stop), forSegment: index)
-            // 0 means "fit the label", which keeps the row honest when a config
-            // supplies more stops than the default four.
-            stopsControl.setWidth(0, forSegment: index)
+            // One width for every segment. Fitting each label instead makes
+            // "1" narrower than "1.5" and the row ragged.
+            stopsControl.setWidth(HUD.segmentWidth, forSegment: index)
         }
         setZoom(currentZoom)
     }
@@ -391,7 +411,9 @@ public final class HUD {
     /// Wide enough for four bezelled controls without squeezing the preview,
     /// which is what should set the panel's width.
     static let previewWidth: CGFloat = 280
-    static let controlHeight: CGFloat = 26
+    /// One width for every stop. Wide enough for "1.5" at 12pt; the icon
+    /// buttons take their size from the picker rather than from this.
+    static let segmentWidth: CGFloat = 38
     /// 16:9 until OBS says otherwise.
     static let defaultCanvasAspect: Double = 16.0 / 9.0
 }
