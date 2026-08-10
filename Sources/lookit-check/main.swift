@@ -801,7 +801,10 @@ do {
     expect(stopLabel(1) == "1", "a whole stop drops the decimal")
     expect(stopLabel(1.5) == "1.5", "a fractional stop keeps it")
 
-    expect(nearestStopIndex(stops: stops, current: 1) == 0, "the row highlights 1x")
+    expect(zoomTitle(1) == "1x", "standing alone on the chip, a stop carries its unit")
+    expect(zoomTitle(1.5) == "1.5x", "and keeps the decimal it would have had")
+
+    expect(nearestStopIndex(stops: stops, current: 1) == 0, "the menu ticks 1x")
     expect(nearestStopIndex(stops: stops, current: 2) == 2, "and the current stop")
     expect(
         nearestStopIndex(stops: stops, current: 1.9) == 2,

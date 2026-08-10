@@ -11,14 +11,13 @@ import LookitCore
 public final class HUD {
     private let panel: NSPanel
     private let statusLabel = NSTextField(labelWithString: "")
-    private let stopsControl = NSSegmentedControl()
     /// Held rather than built inline so it can be greyed when OBS is absent.
     private lazy var obsButton = plainButton("video.fill", "Open OBS", #selector(obsTapped))
-    /// Kept so a stops reload can restore the selection to where the zoom is.
+    /// Held so its title can follow the zoom and its menu can mark the stop.
+    private lazy var zoomButton = buildZoomButton()
+    /// Kept so a stops reload can restore the menu's checkmark to where the
+    /// zoom is, and so the chip can say the multiplier without being asked.
     private var currentZoom: Double = 1.0
-    /// The stop picker's own height, measured at build time. Every icon button
-    /// is this square, so the row lines up whatever metrics AppKit picks.
-    private var controlSide: CGFloat = 24
     private let previewBox = NSView()
     private let previewView = NSImageView()
     /// Swapped whenever the canvas shape changes, so the box always matches it.
@@ -113,24 +112,6 @@ public final class HUD {
         // shapes the material.
         background.maskImage = roundedMask(radius: 12)
 
-        stopsControl.segmentStyle = .texturedRounded
-        stopsControl.controlSize = .large
-        stopsControl.trackingMode = .selectOne
-        // Click-only. A focusable control here would let a stray keystroke
-        // reframe the shot, which is the same promise .nonactivatingPanel makes
-        // about clicks — observed changing the zoom from a synthetic keypress.
-        stopsControl.refusesFirstResponder = true
-        stopsControl.target = self
-        stopsControl.action = #selector(stopPicked(_:))
-        stopsControl.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        stopsControl.translatesAutoresizingMaskIntoConstraints = false
-
-        // Measured before any button is built, because `style` needs it. A
-        // segment has to exist for the control to report a sensible height.
-        stopsControl.segmentCount = 1
-        stopsControl.setLabel("1", forSegment: 0)
-        controlSide = stopsControl.intrinsicContentSize.height
-
         // The gap is deliberate. Quit is the one control here that cannot be
         // taken back by clicking again, so it does not sit next to the ones
         // pressed mid-demo.
@@ -142,7 +123,7 @@ public final class HUD {
             gap,
             obsButton,
             button("arrow.counterclockwise", .reset),
-            stopsControl,
+            zoomButton,
         ])
         controls.orientation = .horizontal
         controls.spacing = 8
@@ -178,9 +159,14 @@ public final class HUD {
     /// panel no longer has to grow for a status line.
     private func buildPreview() -> NSView {
         previewBox.wantsLayer = true
-        previewBox.layer?.cornerRadius = 6
+        previewBox.layer?.cornerRadius = 8
         previewBox.layer?.masksToBounds = true
-        previewBox.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.28).cgColor
+        // Neutral grey rather than the semantic `.labelColor` the chips use.
+        // This one is a plain CGColor that never gets repainted, so it has to
+        // be a colour with no light and dark variant to get wrong — and a well
+        // reads as inset against either appearance. It is also only ever seen
+        // empty: once a frame arrives the image covers it edge to edge.
+        previewBox.layer?.backgroundColor = NSColor.gray.withAlphaComponent(0.22).cgColor
         previewBox.translatesAutoresizingMaskIntoConstraints = false
 
         previewView.imageScaling = .scaleProportionallyUpOrDown
@@ -236,7 +222,7 @@ public final class HUD {
     /// when there is nothing to zoom — quitting and opening OBS are exactly what
     /// you want to reach when the target will not resolve.
     private func plainButton(_ symbol: String, _ help: String, _ action: Selector) -> NSButton {
-        let button = NSButton()
+        let button = Chip()
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
         button.toolTip = help
         button.target = self
@@ -245,44 +231,102 @@ public final class HUD {
         return button
     }
 
-    /// The shared look: a square, visibly bordered target on a dark panel.
+    /// The zoom chip: says where the zoom is, and opens the stops on click.
+    ///
+    /// Wider than the others by exactly the chevron. Without it nothing on the
+    /// button says a menu is behind it, and a control you have to click to
+    /// discover is a control most people never click.
+    private func buildZoomButton() -> NSButton {
+        let button = Chip()
+        button.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        button.imagePosition = .imageRight
+        button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        button.toolTip = "Zoom level"
+        button.target = self
+        button.action = #selector(zoomTapped)
+        style(button, width: HUD.zoomWidth)
+        // Smaller than a chip's own icon: this is punctuation next to the
+        // number, not a peer of the ✕ and ↺ symbols.
+        button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
+        return button
+    }
+
+    /// The shared look: a bordered, rounded target, square unless it carries a
+    /// menu.
     ///
     /// Drawn rather than bezelled. Every AppKit bezel is designed against the
     /// system control background — `.texturedRounded` all but disappears on a
-    /// `.hudWindow` blur — so the chrome is a layer instead.
+    /// `.hudWindow` blur — so the chrome is a layer instead, which is what
+    /// makes `Chip` necessary: see the repaint there.
     ///
-    /// The size comes **from the stop picker**, measured rather than guessed. A
-    /// segmented control keeps its own metrics whatever you constrain it to, so
-    /// picking a number to match it goes stale the moment AppKit changes them.
-    ///
-    /// Measured, not constrained: an `equalTo: stopsControl.heightAnchor` here
-    /// is activated while neither view is in a hierarchy yet, and anchors with
-    /// no common ancestor cannot be activated — which launched a window-less
-    /// process that sat in the run loop printing nothing.
-    private func style(_ button: NSButton) {
+    /// The size is chosen, not measured. It used to be taken from the stop
+    /// picker's `intrinsicContentSize` so the row would line up whatever
+    /// metrics AppKit picked; that produced a consistent 24pt and a consistent
+    /// 24pt is too small to hit mid-demo.
+    private func style(_ button: NSButton, width: CGFloat = HUD.controlSide) {
         button.isBordered = false
         button.wantsLayer = true
-        button.layer?.cornerRadius = 6
+        button.layer?.cornerRadius = 8
         button.layer?.borderWidth = 1
-        button.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        button.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
-        button.contentTintColor = .white
+        // The title looks after itself: a borderless button draws it in
+        // `.controlTextColor`, which is dynamic. Only the layer needs help.
+        button.contentTintColor = .labelColor
         button.imageScaling = .scaleProportionallyDown
         button.symbolConfiguration = NSImage.SymbolConfiguration(
             pointSize: 13, weight: .medium
         )
+        button.focusRingType = .none
         // Not cosmetic: a focusable control here lets a stray keystroke reframe
         // the shot, which is the promise .nonactivatingPanel makes about clicks.
         button.refusesFirstResponder = true
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            button.heightAnchor.constraint(equalToConstant: controlSide),
-            button.widthAnchor.constraint(equalToConstant: controlSide),
+            button.heightAnchor.constraint(equalToConstant: HUD.controlSide),
+            button.widthAnchor.constraint(equalToConstant: width),
         ])
+        (button as? Chip)?.paint()
     }
 
     @objc private func quitTapped() { onQuit() }
     @objc private func obsTapped() { onActivateOBS() }
+
+    /// Offer the stops, marking the one the zoom is nearest.
+    ///
+    /// Built on each click rather than held, because the stops are hot-reloaded
+    /// from config and a menu built once would go stale the moment they change.
+    @objc private func zoomTapped() {
+        let menu = NSMenu()
+        // Otherwise AppKit re-enables the header by validating it, and disables
+        // every stop for the same reason.
+        menu.autoenablesItems = false
+
+        let header = NSMenuItem(title: "Zoom level", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        let current = nearestStopIndex(stops: stops, current: currentZoom)
+        for (index, stop) in stops.enumerated() {
+            let item = NSMenuItem(
+                title: zoomTitle(stop), action: #selector(stopPicked(_:)), keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = index
+            item.state = index == current ? .on : .off
+            menu.addItem(item)
+        }
+
+        // Anchored in screen coordinates, from the chip's rect rather than a
+        // point inside it. A point in the chip's own space is ambiguous — the
+        // space turned out to be flipped, so `y: -4` put the menu's top edge
+        // *above* the chip, covering the number you opened it to change. A
+        // converted rect is flip-agnostic, and `minY` in screen space is the
+        // bottom whatever the view underneath believes.
+        guard let window = zoomButton.window else { return }
+        let onScreen = window.convertToScreen(zoomButton.convert(zoomButton.bounds, to: nil))
+        menu.popUp(
+            positioning: nil, at: NSPoint(x: onScreen.minX, y: onScreen.minY - 4), in: nil
+        )
+    }
 
     /// Grey the OBS button when OBS is not installed, since nothing would open.
     public func setOBSAvailable(_ available: Bool) {
@@ -290,7 +334,7 @@ public final class HUD {
     }
 
     private func button(_ symbol: String, _ action: HotkeyAction) -> NSButton {
-        let button = NSButton()
+        let button = Chip()
         defer { buttons.append(button) }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)
         button.toolTip = action.rawValue
@@ -306,9 +350,9 @@ public final class HUD {
         perform(HotkeyAction.allCases[sender.tag])
     }
 
-    @objc private func stopPicked(_ sender: NSSegmentedControl) {
-        guard stops.indices.contains(sender.selectedSegment) else { return }
-        jump(stops[sender.selectedSegment])
+    @objc private func stopPicked(_ sender: NSMenuItem) {
+        guard stops.indices.contains(sender.tag) else { return }
+        jump(stops[sender.tag])
     }
 
     // MARK: - Position
@@ -339,20 +383,17 @@ public final class HUD {
 
     public func setStops(_ stops: [Double]) {
         self.stops = stops
-        stopsControl.segmentCount = stops.count
-        for (index, stop) in stops.enumerated() {
-            stopsControl.setLabel(stopLabel(stop), forSegment: index)
-            // One width for every segment. Fitting each label instead makes
-            // "1" narrower than "1.5" and the row ragged.
-            stopsControl.setWidth(HUD.segmentWidth, forSegment: index)
-        }
+        // Nothing to build: the menu is made at click time, so a stops reload
+        // only has to leave the chip saying the right thing.
         setZoom(currentZoom)
     }
 
+    /// The zoom the user asked for — not the eased value on its way there.
+    /// The chip prints this number, and a number that counts is a number that
+    /// distracts during exactly the take it is not supposed to disturb.
     public func setZoom(_ zoom: Double) {
         currentZoom = zoom
-        guard let index = nearestStopIndex(stops: stops, current: zoom) else { return }
-        stopsControl.selectedSegment = index
+        zoomButton.title = zoomTitle(zoom)
     }
 
     /// Grey the controls when there is nothing to zoom.
@@ -361,7 +402,7 @@ public final class HUD {
     /// as refused rather than broken.
     public func setZoomEnabled(_ enabled: Bool) {
         for button in buttons { button.isEnabled = enabled }
-        stopsControl.isEnabled = enabled
+        zoomButton.isEnabled = enabled
     }
 
     /// Say what is wrong, in the preview's place.
@@ -411,11 +452,49 @@ public final class HUD {
     /// Wide enough for four bezelled controls without squeezing the preview,
     /// which is what should set the panel's width.
     static let previewWidth: CGFloat = 280
-    /// One width for every stop. Wide enough for "1.5" at 12pt; the icon
-    /// buttons take their size from the picker rather than from this.
-    static let segmentWidth: CGFloat = 38
+    /// Every chip's height, and the square chips' width. Sized to be hit
+    /// without looking, mid-demo, on a panel that must not be aimed at.
+    static let controlSide: CGFloat = 32
+    /// The zoom chip: a square plus room for "1.5x" and its chevron, with
+    /// enough slack that the chevron does not crowd the border stroke.
+    static let zoomWidth: CGFloat = 58
     /// 16:9 until OBS says otherwise.
     static let defaultCanvasAspect: Double = 16.0 / 9.0
+}
+
+/// A control-row chip, repainted whenever the system flips appearance.
+///
+/// This class exists for one reason. `contentTintColor` is an `NSColor` and so
+/// resolves at draw time — a symbol follows light and dark by itself. But
+/// `layer.backgroundColor` is a `CGColor`, which is a colour that has *already*
+/// been resolved, and a layer painted once at build time keeps the palette it
+/// was born in. That is how the chrome ended up white-on-white: the panel's
+/// material followed the system into light mode and the chips did not.
+private final class Chip: NSButton {
+    /// Auto Layout sizes the *alignment rect*; the layer paints the *frame*.
+    ///
+    /// `NSButton` pads the two apart to reserve focus-ring space, and the
+    /// padding depends on the glyph — so one shared `heightAnchor == 32` gave
+    /// `xmark` a 36.5pt frame, `video.fill` 37.5 and `arrow.counterclockwise`
+    /// 40.5. Three visibly different chips from an identical constraint.
+    /// Collapsing the insets makes the constraint mean what it says. Nothing is
+    /// lost: these refuse first responder, so there is no ring to reserve for.
+    override var alignmentRectInsets: NSEdgeInsets {
+        NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        paint()
+    }
+
+    /// Re-resolve the layer colours against whatever appearance is current now.
+    func paint() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.18).cgColor
+        }
+    }
 }
 
 // MARK: - Pure bits
@@ -455,6 +534,14 @@ public func hudOrigin(
 public func stopLabel(_ stop: Double) -> String {
     stop == stop.rounded()
         ? String(format: "%.0f", stop) : String(format: "%.1f", stop)
+}
+
+/// How a stop is written where it needs a unit: on the chip, and in its menu.
+///
+/// The bare `stopLabel` is right on a row of stops, where the column says what
+/// the numbers are. Standing alone on a button, `1.5` could be anything.
+public func zoomTitle(_ stop: Double) -> String {
+    stopLabel(stop) + "x"
 }
 
 /// Which stop the row should show as current, or nil when there are no stops.

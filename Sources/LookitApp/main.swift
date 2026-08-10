@@ -358,6 +358,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.loop = loop
         loop.aim(at: next, pristine: pristine, window: target.window)
         zoom = next
+        // The commanded stop, not the eased value the tick loop is passing
+        // through. The HUD used to be fed `loop.zoom` every frame, which is
+        // right for a picker that snaps to the nearest stop and wrong for a
+        // chip that prints the number: it ran the label up 1.1x, 1.3x, 1.6x…
+        hud?.setZoom(next)
         startTicking()
         refresh()
     }
@@ -404,9 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch loop.step() {
         case .running:
-            hud?.setZoom(loop.zoom)
+            break
         case .settled:
-            hud?.setZoom(loop.zoom)
             settle()
         case .windowGone:
             target = .unresolved(.windowGone)
