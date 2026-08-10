@@ -202,7 +202,7 @@ public struct SceneItemRequest: Encodable, Sendable {
 /// The only write lookit ever makes to a scene.
 ///
 /// OBS accepts a whole transform back verbatim, read-only fields and all —
-/// verified against 32.1.1 — so a journalled Pristine replays as it was read.
+/// verified against 32.1.1 — with one exception, the bounds, handled below.
 /// Fields lookit does not carry, such as `cropToBounds`, are left untouched
 /// because OBS merges rather than replaces.
 public struct SetSceneItemTransformRequest: Encodable, Sendable {
@@ -213,6 +213,17 @@ public struct SetSceneItemTransformRequest: Encodable, Sendable {
     public init(scene: SceneName, itemId: SceneItemId, transform: Transform) {
         sceneName = scene.raw
         sceneItemId = itemId.raw
+        var transform = transform
+        // OBS *reads back* 0 for the bounds of an unbounded item but *refuses*
+        // to be written anything below 1 — a pristine with OBS_BOUNDS_NONE is
+        // therefore not replayable verbatim, which is what broke restore. The
+        // type makes the sizes inert, so the item's own display size satisfies
+        // the validator without changing anything the user sees.
+        if transform.boundsWidth < 1 || transform.boundsHeight < 1 {
+            let display = transform.displaySize
+            transform.boundsWidth = max(1, display.width)
+            transform.boundsHeight = max(1, display.height)
+        }
         sceneItemTransform = transform
     }
 

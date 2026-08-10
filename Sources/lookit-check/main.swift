@@ -1531,6 +1531,20 @@ do {
         "sized to the rectangle it already occupied, so the layout does not jump"
     )
 
+    // Restoring that same unbounded item: OBS refuses bounds below 1, so the
+    // pristine cannot go back as it was read.
+    let replayed = SetSceneItemTransformRequest(
+        scene: SceneName("Scene"), itemId: SceneItemId(4), transform: unbounded
+    ).sceneItemTransform
+    expect(
+        replayed.boundsWidth >= 1 && replayed.boundsHeight >= 1,
+        "a pristine with no bounds is written back with bounds OBS will accept"
+    )
+    expect(
+        replayed.boundsType == "OBS_BOUNDS_NONE" && replayed.cropLeft == 0,
+        "and is otherwise the user's transform, so the item stays unbounded"
+    )
+
     let bounded = reframed(sampleTransform, crop: crop)
     expect(
         bounded.boundsType == sampleTransform.boundsType
