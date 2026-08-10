@@ -158,13 +158,19 @@ extension UnresolvedReason {
 
 // MARK: - What the HUD says
 
-/// The one line the HUD has room for, or nil when nothing is wrong.
+/// What to say in the preview's place, or nil when there is a picture worth
+/// showing instead.
 ///
-/// Several things can be degraded at once, and the HUD fits one line, so they
-/// are ranked by what is stopping the user first: a target cannot resolve
-/// without a connection, and a warning about a keybinding matters less than
-/// either. Pure, so the ranking is checkable and cannot drift between the
-/// places that used to each call setStatus for themselves.
+/// Several things can be degraded at once, and this gets one box, so they are
+/// ranked by what is stopping the user first: a target cannot resolve without a
+/// connection, and a warning about a keybinding matters less than either. Pure,
+/// so the ranking is checkable and cannot drift between the places that used to
+/// each call setStatus for themselves.
+///
+/// Warnings stay in the ranking even though they also appear in the menubar
+/// menu. A restore failure arrives as one, and that is the message saying the
+/// user's layout could not be put back — too important to live only behind a
+/// click. See lookit-check's regression for the bug that taught this.
 public func hudStatus(
     connection: Connection,
     target: TargetState?,

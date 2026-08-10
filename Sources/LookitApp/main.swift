@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             await self?.restoreDirtyLayout()
             await self?.readVersion()
+            await self?.readCanvas()
             await self?.resolve()
         }
     }
@@ -150,6 +151,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Shown in the menu, and the cheapest possible proof the round-trip works.
+    /// Shape the preview to the canvas. Failing is harmless — the box keeps its
+    /// 16:9 guess — so this is a `try?` rather than a state the HUD reports.
+    private func readCanvas() async {
+        guard let connection else { return }
+        guard
+            let video = try? await connection.call(
+                "GetVideoSettings", NoBody(), as: VideoSettingsResponse.self
+            )
+        else { return }
+        hud?.setCanvasAspect(width: video.baseWidth, height: video.baseHeight)
+    }
+
     private func readVersion() async {
         guard let connection else { return }
         let version = try? await connection.call("GetVersion", NoBody(), as: ObsVersion.self)

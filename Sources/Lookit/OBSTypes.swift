@@ -120,6 +120,14 @@ public struct ObsVersion: Decodable, Sendable {
     public let obsVersion: String
 }
 
+/// The canvas, used to shape the HUD's preview so what is framed there is what
+/// goes out. `base`, not `output`: the canvas is what scene items are laid out
+/// on, and a downscaled output does not change their proportions.
+public struct VideoSettingsResponse: Decodable, Sendable {
+    public let baseWidth: Int
+    public let baseHeight: Int
+}
+
 public struct SceneItemTransformResponse: Decodable, Sendable {
     public let sceneItemTransform: Transform
 }

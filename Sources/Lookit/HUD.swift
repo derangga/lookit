@@ -13,6 +13,10 @@ public final class HUD {
     private let zoomLabel = NSTextField(labelWithString: "1.0×")
     private let stopsLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
+    private let previewBox = NSView()
+    private let previewView = NSImageView()
+    /// Swapped whenever the canvas shape changes, so the box always matches it.
+    private var previewAspect: NSLayoutConstraint?
     private let perform: (HotkeyAction) -> Void
     private let onMove: (CGPoint) -> Void
 
@@ -29,7 +33,9 @@ public final class HUD {
         self.onMove = onMove
 
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: HUD.width, height: HUD.baseHeight),
+            // Provisional: buildContent sizes the panel to its content, and
+            // setCanvasAspect resizes it again once OBS reports the canvas.
+            contentRect: NSRect(x: 0, y: 0, width: HUD.previewWidth, height: 200),
             // .nonactivatingPanel is the whole point: clicking + must not pull
             // focus away from the app being captured.
             styleMask: [.borderless, .nonactivatingPanel],
@@ -94,14 +100,6 @@ public final class HUD {
         stopsLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
         stopsLabel.textColor = .secondaryLabelColor
         stopsLabel.alignment = .center
-        statusLabel.font = .systemFont(ofSize: 9)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.alignment = .center
-        statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.maximumNumberOfLines = 1
-        // Without this the label refuses to shrink, the stack grows to fit, and
-        // a long warning spills outside the panel's rounded background.
-        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let controls = NSStackView(views: [
             button("minus", .zoomOut),
@@ -113,10 +111,10 @@ public final class HUD {
         controls.spacing = 8
         controls.alignment = .centerY
 
-        let stack = NSStackView(views: [controls, stopsLabel, statusLabel])
+        let stack = NSStackView(views: [buildPreview(), controls, stopsLabel])
         stack.orientation = .vertical
-        stack.spacing = 1
-        stack.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        stack.spacing = 4
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         background.addSubview(stack)
@@ -125,11 +123,55 @@ public final class HUD {
             stack.bottomAnchor.constraint(equalTo: background.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: background.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: background.trailingAnchor),
-            stack.widthAnchor.constraint(equalToConstant: HUD.width),
         ])
 
         panel.contentView = background
         statusLabel.isHidden = true
+        resizeToFit()
+    }
+
+    /// The preview area, and the status text that shares it.
+    ///
+    /// They are never both wanted: whenever there is something to say, there is
+    /// no frame worth showing. That is what lets one box serve both and why the
+    /// panel no longer has to grow for a status line.
+    private func buildPreview() -> NSView {
+        previewBox.wantsLayer = true
+        previewBox.layer?.cornerRadius = 6
+        previewBox.layer?.masksToBounds = true
+        previewBox.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.28).cgColor
+        previewBox.translatesAutoresizingMaskIntoConstraints = false
+
+        previewView.imageScaling = .scaleProportionallyUpOrDown
+        previewView.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.alignment = .center
+        statusLabel.lineBreakMode = .byWordWrapping
+        statusLabel.maximumNumberOfLines = 3
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        previewBox.addSubview(previewView)
+        previewBox.addSubview(statusLabel)
+
+        let aspect = previewBox.heightAnchor.constraint(
+            equalTo: previewBox.widthAnchor, multiplier: 1 / HUD.defaultCanvasAspect
+        )
+        previewAspect = aspect
+
+        NSLayoutConstraint.activate([
+            previewBox.widthAnchor.constraint(equalToConstant: HUD.previewWidth),
+            aspect,
+            previewView.topAnchor.constraint(equalTo: previewBox.topAnchor),
+            previewView.bottomAnchor.constraint(equalTo: previewBox.bottomAnchor),
+            previewView.leadingAnchor.constraint(equalTo: previewBox.leadingAnchor),
+            previewView.trailingAnchor.constraint(equalTo: previewBox.trailingAnchor),
+            statusLabel.centerYAnchor.constraint(equalTo: previewBox.centerYAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: previewBox.leadingAnchor, constant: 8),
+            statusLabel.trailingAnchor.constraint(equalTo: previewBox.trailingAnchor, constant: -8),
+        ])
+        return previewBox
     }
 
     /// A resizable rounded-rectangle mask for shaping the material.
@@ -210,25 +252,46 @@ public final class HUD {
         zoomLabel.textColor = enabled ? .labelColor : .disabledControlTextColor
     }
 
+    /// Say what is wrong, in the preview's place.
+    ///
+    /// No resize: the panel is one size in every state now, so a warning
+    /// arriving cannot make the HUD jump under the cursor.
     public func setStatus(_ text: String?) {
         statusLabel.stringValue = text ?? ""
         statusLabel.isHidden = text == nil
-        statusLabel.toolTip = text  // the full text, since the label truncates
-
-        // Grow for the extra line rather than letting it overlap the ruler.
-        // Resizing keeps the bottom-left origin, so the panel does not appear
-        // to jump when a warning arrives.
-        let height = text == nil ? HUD.baseHeight : HUD.baseHeight + HUD.statusHeight
-        guard panel.frame.height != height else { return }
-        let origin = panel.frame.origin
-        panel.setFrame(
-            NSRect(x: origin.x, y: origin.y, width: HUD.width, height: height), display: true
-        )
+        statusLabel.toolTip = text  // the full text, since three lines can truncate
+        previewView.isHidden = text != nil
     }
 
-    static let width: CGFloat = 168
-    static let baseHeight: CGFloat = 56
-    static let statusHeight: CGFloat = 14
+    /// Shape the preview to the OBS canvas, so what is framed here is what goes
+    /// out. Until this arrives the box is 16:9, which is merely a guess.
+    public func setCanvasAspect(width: Int, height: Int) {
+        guard width > 0, height > 0 else { return }
+        let aspect = Double(width) / Double(height)
+
+        previewAspect?.isActive = false
+        let updated = previewBox.heightAnchor.constraint(
+            equalTo: previewBox.widthAnchor, multiplier: 1 / aspect
+        )
+        updated.isActive = true
+        previewAspect = updated
+
+        resizeToFit()
+    }
+
+    /// Size the panel to its content, keeping the bottom-left origin so it does
+    /// not appear to jump.
+    private func resizeToFit() {
+        guard let content = panel.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        let size = content.fittingSize
+        guard size.width > 0, size.height > 0, panel.frame.size != size else { return }
+        panel.setFrame(NSRect(origin: panel.frame.origin, size: size), display: true)
+    }
+
+    static let previewWidth: CGFloat = 240
+    /// 16:9 until OBS says otherwise.
+    static let defaultCanvasAspect: Double = 16.0 / 9.0
 }
 
 // MARK: - Pure bits
