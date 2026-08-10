@@ -34,8 +34,10 @@ public enum RestoreError: Error, Equatable, Sendable {
             switch journal {
             case let .corrupt(detail): self = .unreadable(detail)
             case let .deleteFailed(detail): self = .notCleared(detail)
-            // Restore never writes a journal, so this cannot arrive.
+            // Restore neither writes a journal nor holds a scope, so neither of
+            // these can arrive here.
             case let .writeFailed(detail): self = .refused(detail)
+            case let .stillHeld(name): self = .refused("still holding \(name.raw)")
             }
         case let obs as ObsError:
             self = .refused(DisconnectReason(obs).message)

@@ -67,6 +67,9 @@ public enum JournalError: Error, Equatable, Sendable {
     case corrupt(String)
     /// Could not remove a journal whose work is done.
     case deleteFailed(String)
+    /// The scope is still held for a different scene item. Invariant 2: taking
+    /// a second one would leave two items altered with one journal between them.
+    case stillHeld(InputName)
 }
 
 extension JournalError {
@@ -77,6 +80,7 @@ extension JournalError {
         case let .writeFailed(detail): "Cannot save your layout, so not zooming — \(detail)"
         case let .corrupt(detail): "The saved layout is unreadable — \(detail)"
         case let .deleteFailed(detail): "Could not clear the saved layout — \(detail)"
+        case let .stillHeld(name): "Still restoring \(name.raw) — not zooming yet"
         }
     }
 }

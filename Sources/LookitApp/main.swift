@@ -113,15 +113,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Releasing the outgoing target before acquiring the new one — invariant 2 —
-    /// is its own bead and needs a dirty scope that does not exist yet. Nothing
-    /// is ever dirty today, so re-resolving is the whole handler for now.
     private func handle(_ event: ObsEvent) {
         switch event {
         case let .sceneChanged(scene):
             FileHandle.standardError.write(Data("lookit: scene → \(scene.raw)\n".utf8))
-            Task { [weak self] in await self?.resolve() }
+            Task { [weak self] in await self?.switchScene() }
         }
+    }
+
+    /// Invariant 2, and the order is the whole point: the outgoing target is
+    /// given back before the incoming one can be taken.
+    ///
+    /// If the release fails the scope stays dirty, and `acquire` then refuses
+    /// the new target rather than leaving two items altered.
+    private func switchScene() async {
+        await releaseScope()
+        zoom = config.stops.first ?? 1.0
+        hud?.setZoom(zoom)
+        await resolve()
     }
 
     /// Shown in the menu, and the cheapest possible proof the round-trip works.

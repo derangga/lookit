@@ -1368,6 +1368,29 @@ do {
         expect(!scope.isDirty, "a refused journal leaves the scope CLEAN — nothing was reframed")
     }
 
+    // Invariant 2: a second, DIFFERENT target must be refused, not silently
+    // handed the outgoing item's pristine.
+    do {
+        let journal = FakeJournal()
+        let scope = DirtyScope(journal: journal.store) { _ in }
+        _ = try scope.acquire(target)
+        let other = Target(
+            scene: SceneName("Scene Terminal"), itemId: SceneItemId(1),
+            inputName: InputName("terminal"), window: WindowID(49),
+            bundleID: "com.mitchellh.ghostty", transform: sampleTransform
+        )
+        do {
+            _ = try scope.acquire(other)
+            expect(false, "a second scene item must not be taken while one is held")
+        } catch {
+            expect(error == .stillHeld(InputName("chrome")), "and it names what is still held")
+        }
+        expect(journal.log == ["write"], "the held journal is untouched by the refusal")
+        expect(journal.stored?.itemId == SceneItemId(3), "and still describes the outgoing item")
+    } catch {
+        expect(false, "setup must not fail: \(error)")
+    }
+
     // Release restores, then forgets.
     do {
         let journal = FakeJournal()

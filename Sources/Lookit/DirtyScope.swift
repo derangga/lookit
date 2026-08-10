@@ -33,7 +33,16 @@ public final class DirtyScope {
     /// user's real layout would be gone with no record of it anywhere.
     @discardableResult
     public func acquire(_ target: Target) throws(JournalError) -> Pristine {
-        if case let .dirty(pristine) = state { return pristine }
+        if case let .dirty(pristine) = state {
+            // Invariant 2: at most one dirty scene item, ever. A *different*
+            // target here means the outgoing one was never given back — a
+            // failed release, usually — and reframing this one would leave two
+            // items altered with a single journal between them.
+            guard pristine.scene == target.scene, pristine.itemId == target.itemId else {
+                throw .stillHeld(pristine.inputName)
+            }
+            return pristine
+        }
 
         let pristine = target.pristine
         try journal.write(pristine)
