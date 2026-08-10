@@ -230,6 +230,7 @@ Established by inspection, not assumption:
 |---|---|
 | macOS | 15.7.7, Swift 6.1.2 (typed throws available) |
 | OBS | 32.1.1, `obs-websocket` 5.7.3 bundled, port 4455, **enabled, auth required** — Hello/Identify handshake verified against the password in `config.json` |
+| `SetSceneItemTransform` round-trip | measured over 60 sends on loopback: **median 0.27ms, p90 0.57ms, max 7.41ms** — two orders of magnitude under a 33ms tick |
 | Canvas | 2992×1858 @ 30fps |
 | Captures | window capture (`screen_capture` type 1), not display capture |
 | TCC | **none required** — `RegisterEventHotKey`, `NSEvent.mouseLocation` and window *bounds* all need no permission |
@@ -244,3 +245,5 @@ Established by inspection, not assumption:
 2. ~~Is `NSWindow.sharingType = .none` honoured by ScreenCaptureKit on macOS 15?~~ **Answered: yes.** `./scripts/verify-hud-not-captured.sh` captures the same region twice, once with the panel deliberately capturable and once normally, and fails if they match. On macOS 15.7.7 the HUD is present in the first and absent in the second.
 
 3. Does 30Hz websocket easing look smooth, or stepped? Still open — this is the measurement ADR 0001 defers to, and it needs the tick loop.
+
+   **Half answered: the transport is not the limit.** A transform round-trip runs a median 0.27ms against a 33ms budget, so if the motion looks stepped the cause is the tick cadence or the easing curve, not OBS. The `max 7.41ms` tail is why coalescing stays anyway — it is cheap, and a stall under load is exactly when a backlog would hurt.
