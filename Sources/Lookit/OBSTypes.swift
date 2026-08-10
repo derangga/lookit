@@ -203,9 +203,14 @@ public func obsEvent(in data: Data) -> ObsEvent? {
 // MARK: - What is being captured
 
 public enum CaptureBinding: Equatable, Sendable {
-    /// A specific window. The bundle id is carried because window ids are
-    /// recycled and must be validated against their owner.
-    case window(WindowID, bundleID: String?)
+    /// A specific window, and the id is all OBS reliably knows about it.
+    ///
+    /// The `application` field is deliberately not carried. It is vestigial:
+    /// it survives re-picking the source onto a different browser, so it
+    /// describes application-capture mode rather than this source. Validating
+    /// the owner against it would reject the correct window forever. The owner
+    /// to check comes from the window server instead — see `windowOwner`.
+    case window(WindowID)
     /// A whole display. Not zoomable yet — reported explicitly so the HUD can
     /// say why rather than showing a bare "unresolved".
     case display(uuid: String)
@@ -219,7 +224,7 @@ public func captureBinding(from settings: CaptureSettings) -> CaptureBinding {
     switch settings.type {
     case 1:
         guard let window = settings.window else { return .unsupported(type: settings.type) }
-        return .window(WindowID(window), bundleID: settings.application)
+        return .window(WindowID(window))
     case 0:
         guard let uuid = settings.display_uuid else { return .unsupported(type: settings.type) }
         return .display(uuid: uuid)

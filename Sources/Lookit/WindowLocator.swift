@@ -21,10 +21,12 @@ extension WindowLocator {
     /// Screen Recording, and bounds are not a title.
     ///
     /// - Parameter bundleID: the application the window is expected to belong
-    ///   to. **Not optional in spirit** — macOS recycles window ids, so an id
-    ///   alone can resolve to a different app's window and lookit would frame
-    ///   the wrong thing silently. Passing nil skips the check and accepts that
-    ///   risk; only do so when the id was resolved moments ago.
+    ///   to, as reported by `windowOwner` at resolve time. **Never OBS's
+    ///   `application` field**, which is vestigial and would reject the correct
+    ///   window. **Not optional in spirit** — macOS recycles window ids, so an
+    ///   id alone can resolve to a different app's window and lookit would
+    ///   frame the wrong thing silently. Passing nil skips the check and
+    ///   accepts that risk; only do so when the id was resolved moments ago.
     public static func live(expecting bundleID: String?) -> WindowLocator {
         WindowLocator { id in
             guard
@@ -69,6 +71,37 @@ public func captureRect(fromBounds bounds: [String: Any], scale: Double) -> Capt
     else { return nil }
 
     return CaptureRect(x: x, y: y, width: width, height: height, scale: scale)
+}
+
+// MARK: - Resolving a window id
+
+/// Whether the window at `id` is plausibly the one OBS is capturing.
+///
+/// OBS keeps the source's pixel size honest — a dead capture reports 0×0 — but
+/// its saved window id can be stale, and a stale id names someone else's
+/// window rather than failing. Comparing the window's backing-pixel size to the
+/// size OBS reports is the only cross-check available: window *titles* would
+/// need Screen Recording, and the whole design turns on needing no TCC.
+///
+/// ponytail: two same-sized windows are indistinguishable this way. The per-tick
+/// owner check catches the case that actually happens — the captured app quits
+/// mid-session — and a re-resolve on the next scene change corrects the rest.
+public func matchesSource(_ rect: CaptureRect, _ source: SourceSize, tolerance: Double = 2) -> Bool {
+    abs(rect.sourceSize.width - source.width) <= tolerance
+        && abs(rect.sourceSize.height - source.height) <= tolerance
+}
+
+/// Who owns this window, according to the window server.
+///
+/// This — never OBS's `application` field — is the value to validate against on
+/// later ticks. Measured: after re-picking a Helium window, OBS still reported
+/// `com.google.Chrome` while the window server correctly said `net.imput.helium`.
+public func windowOwner(_ id: WindowID) -> String? {
+    guard
+        let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, id.raw) as? [[String: Any]],
+        let pid = infos.first?[kCGWindowOwnerPID as String] as? pid_t
+    else { return nil }
+    return bundleID(forPID: pid)
 }
 
 /// Whether a window still belongs to the application lookit thinks it does.

@@ -502,13 +502,13 @@ do {
         #"{"application":"com.google.Chrome","display_uuid":"37D8","type":1,"window":384}"#
     )
     expect(
-        chrome.map(captureBinding) == .window(WindowID(384), bundleID: "com.google.Chrome"),
-        "a window capture yields its id and the owner to validate against"
+        chrome.map(captureBinding) == .window(WindowID(384)),
+        "a window capture yields its id, and OBS's application field is ignored"
     )
 
     let terminal = decode(CaptureSettings.self, #"{"type":1,"window":37}"#)
     expect(
-        terminal.map(captureBinding) == .window(WindowID(37), bundleID: nil),
+        terminal.map(captureBinding) == .window(WindowID(37)),
         "a window capture with no recorded application still binds"
     )
 
@@ -658,7 +658,7 @@ do {
     )
 
     expect(
-        UnresolvedReason(unsupported: .window(WindowID(1), bundleID: nil)) == nil,
+        UnresolvedReason(unsupported: .window(WindowID(1))) == nil,
         "a window binding is not an unsupported reason"
     )
     expect(
@@ -1255,6 +1255,58 @@ do {
             warnings: [ConfigWarning(key: "restore", detail: RestoreError.notCleared("denied").message)]
         )?.contains("Layout restored") == true,
         "a restore failure is not lost behind a later status update"
+    )
+}
+
+// MARK: - Is this really OBS's window?
+
+print("matchesSource")
+
+do {
+    // Measured live: Helium window 46 is 1496x929 points on a 2x display, and
+    // OBS reports the source as 2992 x 1858 backing pixels.
+    let helium = CaptureRect(x: 100, y: 60, width: 1496, height: 929, scale: 2)
+    expect(
+        matchesSource(helium, SourceSize(width: 2992, height: 1858)),
+        "the window OBS is really capturing matches its reported source size"
+    )
+
+    // A stale id resolving to some other window is the failure this catches.
+    expect(
+        !matchesSource(helium, SourceSize(width: 1280, height: 800)),
+        "a differently sized window is not the one OBS is capturing"
+    )
+
+    // OBS reports 0x0 for a capture whose window has gone. It must never look
+    // like a match, whatever the window server says.
+    expect(
+        !matchesSource(helium, SourceSize(width: 0, height: 0)),
+        "a dead capture matches nothing"
+    )
+
+    // Sub-pixel rounding must not read as a different window.
+    expect(
+        matchesSource(
+            CaptureRect(x: 0, y: 0, width: 1496.5, height: 929, scale: 2),
+            SourceSize(width: 2992, height: 1858)
+        ),
+        "a pixel of rounding is still the same window"
+    )
+
+    // Non-Retina: the scale is what makes points and source pixels agree.
+    expect(
+        matchesSource(
+            CaptureRect(x: 0, y: 0, width: 1496, height: 929, scale: 1),
+            SourceSize(width: 1496, height: 929)
+        ),
+        "a 1x display maps points to pixels one for one"
+    )
+    expect(
+        !matchesSource(
+            CaptureRect(x: 0, y: 0, width: 1496, height: 929, scale: 1),
+            SourceSize(width: 2992, height: 1858)
+        ),
+        "and the same window at 1x is not a 2x capture"
     )
 }
 
