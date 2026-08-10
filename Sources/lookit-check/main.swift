@@ -1310,6 +1310,109 @@ do {
     )
 }
 
+// MARK: - The dirty scope
+
+print("DirtyScope")
+
+do {
+    let target = Target(
+        scene: SceneName("Scene Browser"), itemId: SceneItemId(3),
+        inputName: InputName("chrome"), window: WindowID(46),
+        bundleID: "net.imput.helium", transform: sampleTransform
+    )
+    /// What the item looks like after lookit has cropped it. Journalling THIS
+    /// would be the unrecoverable bug.
+    var cropped = sampleTransform
+    cropped.cropLeft = 400
+    let zoomed = Target(
+        scene: target.scene, itemId: target.itemId, inputName: target.inputName,
+        window: target.window, bundleID: target.bundleID, transform: cropped
+    )
+
+    // Acquire journals first, then goes dirty.
+    do {
+        let journal = FakeJournal()
+        let scope = DirtyScope(journal: journal.store) { _ in }
+        let pristine = try scope.acquire(target)
+        expect(pristine.transform == sampleTransform, "the pristine is the framing as found")
+        expect(journal.stored == pristine, "and it is on disk before anything is reframed")
+        expect(scope.isDirty, "the scope is held")
+    } catch {
+        expect(false, "acquiring a writable journal must work: \(error)")
+    }
+
+    // The trap: acquiring again after a zoom must not overwrite the pristine.
+    do {
+        let journal = FakeJournal()
+        let scope = DirtyScope(journal: journal.store) { _ in }
+        _ = try scope.acquire(target)
+        let second = try scope.acquire(zoomed)
+        expect(second.transform == sampleTransform, "a second acquire returns the ORIGINAL pristine")
+        expect(journal.stored?.transform == sampleTransform, "and never journals the cropped framing")
+        expect(journal.log == ["write"], "the journal is written exactly once")
+    } catch {
+        expect(false, "a repeated acquire must not fail: \(error)")
+    }
+
+    // Invariant 1: no journal, no zoom.
+    do {
+        let scope = DirtyScope(journal: .unwritable) { _ in }
+        _ = try scope.acquire(target)
+        expect(false, "an unwritable journal must refuse the scope")
+    } catch {
+        expect(error == .writeFailed("unwritable"), "and says why")
+    }
+    do {
+        let scope = DirtyScope(journal: .unwritable) { _ in }
+        _ = try? scope.acquire(target)
+        expect(!scope.isDirty, "a refused journal leaves the scope CLEAN — nothing was reframed")
+    }
+
+    // Release restores, then forgets.
+    do {
+        let journal = FakeJournal()
+        var restored: [Pristine] = []
+        let scope = DirtyScope(journal: journal.store) { restored.append($0) }
+        _ = try scope.acquire(target)
+        try await scope.release()
+        expect(restored.map(\.transform) == [sampleTransform], "release puts the pristine back")
+        expect(journal.log == ["write", "read", "delete"], "and deletes the journal only after")
+        expect(!scope.isDirty, "the scope is given back")
+    } catch {
+        expect(false, "releasing a held scope must work: \(error)")
+    }
+
+    // OBS refusing the restore must not lose the scope.
+    do {
+        let journal = FakeJournal()
+        let scope = DirtyScope(journal: journal.store) { _ throws(ObsError) in
+            throw .requestFailed(code: 600, comment: "gone")
+        }
+        _ = try scope.acquire(target)
+        do {
+            try await scope.release()
+            expect(false, "a refused release must be reported")
+        } catch {
+            expect(scope.isDirty, "a scope that could not be restored is STILL DIRTY")
+            expect(journal.stored != nil, "and its journal stays on disk")
+        }
+    } catch {
+        expect(false, "setup must not fail: \(error)")
+    }
+
+    // Release is called on five exit paths; most of the time nothing is held.
+    do {
+        let journal = FakeJournal()
+        let scope = DirtyScope(journal: journal.store) { _ in
+            expect(false, "releasing a clean scope must not touch OBS")
+        }
+        try await scope.release()
+        expect(journal.log == [], "releasing a clean scope does nothing at all")
+    } catch {
+        expect(false, "releasing clean must not fail: \(error)")
+    }
+}
+
 print("")
 if failures == 0 {
     print("all checks passed")
