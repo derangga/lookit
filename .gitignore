@@ -1,6 +1,10 @@
 .build/
 *.xcuserstate
 lookit.app/
+
+# The generated icon pack. Resources/AppIcon.iconset/ is the committed form —
+# see Resources/README.md.
+AppIcons/
 *.o
 *.d
 *.swiftdeps

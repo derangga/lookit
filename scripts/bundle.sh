@@ -39,13 +39,29 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key>           <string>1</string>
     <key>LSMinimumSystemVersion</key>    <string>13.0</string>
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <!-- Menubar only: no Dock icon, no app menu. -->
     <key>LSUIElement</key>               <true/>
 </dict>
 </plist>
 PLIST
 
-# Ad-hoc signature. Not for distribution — it stops macOS treating each rebuild
+# The icon. CFBundleIconFile and a plain .icns, not CFBundleIconName — the
+# latter wants a compiled asset catalog, which an SPM build has no way to make.
+#
+# LSUIElement means this never reaches the Dock; it is what Finder and Login
+# Items show. The menubar image is an SF Symbol set in code, deliberately: a
+# template image inverts with the menubar and a colour icon would not.
+ICONSET="Resources/AppIcon.iconset"
+if [[ -d "$ICONSET" ]]; then
+    mkdir -p "$APP/Contents/Resources"
+    iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+else
+    echo "warning: no $ICONSET, building without an icon" >&2
+fi
+
+# Ad-hoc signature. Runs last, after the icon: signing a bundle and then adding
+# resources to it invalidates the signature. Not for distribution — it stops macOS treating each rebuild
 # as a brand new app, which would otherwise reset anything keyed to identity.
 codesign --force --sign - "$APP" 2>/dev/null || echo "warning: ad-hoc signing failed" >&2
 
