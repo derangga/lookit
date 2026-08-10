@@ -240,6 +240,11 @@ public final class HUD {
         let button = Chip()
         button.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
         button.imagePosition = .imageRight
+        // Otherwise AppKit pins the chevron to the button's right edge and
+        // spends all the slack between it and the number — the chevron ends up
+        // against the border stroke with a hole in the middle of the chip.
+        // Hugging keeps the pair together and centres them as one.
+        button.imageHugsTitle = true
         button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         button.toolTip = "Zoom level"
         button.target = self
