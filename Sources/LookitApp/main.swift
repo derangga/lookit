@@ -214,10 +214,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // OBS is not wired yet — the transport and tick loop are their own beads.
-    // Until then the zoom level is local, which is enough to prove the hotkeys
-    // and the HUD controls drive the same state.
+    /// Invariant 1's precondition, and the one place both input paths meet.
+    ///
+    /// The HUD buttons are greyed out without a Target, but a hotkey does not
+    /// go through them — so the refusal lives here, where the tick loop will
+    /// share it. No Target, no reframe: not a partial one, not a crop applied
+    /// with nothing to restore it from.
     private func perform(_ action: HotkeyAction) {
+        guard target?.target != nil else { return }
+
         switch action {
         case .zoomIn: zoom = nextStop(stops: config.stops, from: zoom, direction: 1)
         case .zoomOut: zoom = nextStop(stops: config.stops, from: zoom, direction: -1)
@@ -244,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// let a config warning silently overwrite a restore failure.
     private func refresh() {
         hud?.setStatus(hudStatus(connection: connectionState, target: target, warnings: warnings))
+        hud?.setZoomEnabled(target?.target != nil)
 
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()

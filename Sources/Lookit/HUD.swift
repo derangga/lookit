@@ -17,6 +17,8 @@ public final class HUD {
     private let onMove: (CGPoint) -> Void
 
     private var stops: [Double] = Config.fallback.stops
+    /// Kept so the controls can be greyed out when there is nothing to zoom.
+    private var buttons: [NSButton] = []
 
     public init(
         savedPosition: CGPoint?,
@@ -130,6 +132,7 @@ public final class HUD {
 
     private func button(_ symbol: String, _ action: HotkeyAction) -> NSButton {
         let button = NSButton()
+        defer { buttons.append(button) }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)
         button.isBordered = false
         button.bezelStyle = .inline
@@ -177,6 +180,15 @@ public final class HUD {
     public func setZoom(_ zoom: Double) {
         zoomLabel.stringValue = String(format: "%.1f×", zoom)
         stopsLabel.stringValue = stopsRuler(stops: stops, current: zoom)
+    }
+
+    /// Grey the controls when there is nothing to zoom.
+    ///
+    /// The status line already says *why*; this says *that*, so a dead keypress
+    /// reads as refused rather than broken.
+    public func setZoomEnabled(_ enabled: Bool) {
+        for button in buttons { button.isEnabled = enabled }
+        zoomLabel.textColor = enabled ? .labelColor : .disabledControlTextColor
     }
 
     public func setStatus(_ text: String?) {
