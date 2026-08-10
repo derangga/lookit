@@ -460,9 +460,13 @@ public final class HUD {
     /// Every chip's height, and the square chips' width. Sized to be hit
     /// without looking, mid-demo, on a panel that must not be aimed at.
     static let controlSide: CGFloat = 32
-    /// The zoom chip: a square plus room for "1.5x" and its chevron, with
-    /// enough slack that the chevron does not crowd the border stroke.
-    static let zoomWidth: CGFloat = 58
+    /// The zoom chip: a square plus room for "1.5x" and its chevron.
+    ///
+    /// Fixed rather than fitted. Sizing to the label would shrink the chip on
+    /// "1x" and grow it on "1.5x", so every zoom change would shuffle the row
+    /// under the cursor — on the one panel that must stay clickable without
+    /// being looked at. This is the widest default stop plus a small margin.
+    static let zoomWidth: CGFloat = 50
     /// 16:9 until OBS says otherwise.
     static let defaultCanvasAspect: Double = 16.0 / 9.0
 }
