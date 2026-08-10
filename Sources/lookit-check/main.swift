@@ -1520,6 +1520,119 @@ do {
     )
 }
 
+// MARK: - §9: the same graph under a test R
+
+print("TickLoop under scripted R")
+
+/// Clock, cursor and OBS, all under the check's control.
+@MainActor
+final class Rig {
+    var clock = 0.0
+    var cursor = ScreenPoint(x: 0, y: 0)
+    var window: CaptureRect? = CaptureRect(x: 100, y: 60, width: 1496, height: 929, scale: 2)
+    var sent: [SetSceneItemTransformRequest] = []
+
+    var environment: TickLoop.Environment {
+        TickLoop.Environment(
+            cursor: { [self] in cursor },
+            locate: { [self] _ in window },
+            now: { [self] in clock },
+            send: { [self] in sent.append($0) }
+        )
+    }
+
+    /// Advance one 30Hz frame and run it.
+    @discardableResult
+    func frame(_ loop: TickLoop) -> TickLoop.Outcome {
+        clock += 1.0 / 30
+        return loop.step()
+    }
+}
+
+do {
+    let rig = Rig()
+    let pristine = Pristine(
+        scene: SceneName("Scene Browser"), itemId: SceneItemId(3),
+        inputName: InputName("chrome"), transform: sampleTransform
+    )
+    let loop = TickLoop(
+        environment: rig.environment, deadZone: 0.6, easeMs: 300, resting: 1
+    )
+
+    // Zoom in to 2x. The ease is 300ms, so ~9 frames at 30Hz.
+    rig.cursor = ScreenPoint(x: 100 + 748, y: 60 + 464)   // dead centre
+    loop.aim(at: 2, pristine: pristine, window: WindowID(46))
+
+    var outcomes: [TickLoop.Outcome] = []
+    var zooms: [Double] = []
+    for _ in 0..<9 {
+        outcomes.append(rig.frame(loop))
+        zooms.append(loop.zoom)
+    }
+
+    expect(outcomes.allSatisfy { $0 == .running }, "the ease runs, frame by frame")
+    expect(rig.sent.count == 9, "one transform per frame")
+    expect(abs(loop.zoom - 2) < 0.01, "and it arrives at the stop it was aimed at")
+
+    // Smoothstep on the zoom: slow at both ends, fastest in the middle.
+    let zoomSteps = zip(zooms, zooms.dropFirst()).map { $1 - $0 }
+    expect(zoomSteps[zoomSteps.count / 2] > zoomSteps[0], "the zoom accelerates out of the start")
+    expect(zoomSteps[zoomSteps.count / 2] > zoomSteps.last!, "and decelerates into the end")
+
+    // The eased pan end to end: the crop must grow monotonically, never jump.
+    let crops = rig.sent.map(\.sceneItemTransform.cropLeft)
+    expect(crops.first! < 60, "the first frame is barely cropped — the ease starts at 1x")
+    expect(crops.last! > 700, "the last is cropped to half the width, which is 2x")
+    expect(zip(crops, crops.dropFirst()).allSatisfy { $0 <= $1 }, "and it only ever grows")
+
+    // Worth knowing, and not obvious: crop is 1 - 1/zoom, so its velocity peaks
+    // EARLY even though the zoom's peaks in the middle. Smoothstep in zoom is
+    // not smoothstep in what the viewer sees.
+    let cropSteps = zip(crops, crops.dropFirst()).map { $1 - $0 }
+    expect(
+        cropSteps[0] > cropSteps.last!,
+        "the visible motion is front-loaded relative to the zoom curve"
+    )
+
+    // Now move the cursor to a corner and watch the shot follow.
+    rig.sent.removeAll()
+    rig.cursor = ScreenPoint(x: 100 + 1480, y: 60 + 920)
+    for _ in 0..<3 { rig.frame(loop) }
+    let panned = rig.sent.map(\.sceneItemTransform.cropLeft)
+    expect(panned.last! > crops.last!, "the shot pans toward the cursor")
+    expect(
+        rig.sent.allSatisfy { $0.sceneItemTransform.cropRight >= 0 },
+        "and never crops past the edge of the source"
+    )
+
+    // Cursor off the window: frozen, and the frame stops moving.
+    rig.sent.removeAll()
+    rig.cursor = ScreenPoint(x: 5, y: 5)
+    for _ in 0..<3 { rig.frame(loop) }
+    let frozen = Set(rig.sent.map(\.sceneItemTransform.cropLeft))
+    expect(frozen.count == 1, "a cursor off the window holds the shot exactly still")
+
+    // The window goes away mid-session.
+    rig.window = nil
+    expect(rig.frame(loop) == .windowGone, "a vanished window stops the loop")
+
+    // Zoom back out. The last frame must land at rest before settling, or the
+    // shot would be left a fraction short of where it belongs.
+    rig.window = CaptureRect(x: 100, y: 60, width: 1496, height: 929, scale: 2)
+    rig.sent.removeAll()
+    loop.aim(at: 1, pristine: pristine, window: WindowID(46))
+    var settled = false
+    for _ in 0..<12 where !settled {
+        settled = rig.frame(loop) == .settled
+    }
+    expect(settled, "the zoom-out settles")
+    expect(abs(loop.zoom - 1) < 0.001, "exactly at rest")
+    expect(
+        rig.sent.last?.sceneItemTransform.cropLeft == 0,
+        "and the final frame — sent before settling — is the uncropped one"
+    )
+}
+
 print("")
 if failures == 0 {
     print("all checks passed")

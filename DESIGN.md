@@ -263,3 +263,5 @@ Established by inspection, not assumption:
 3. Does 30Hz websocket easing look smooth, or stepped? Still open — this is the measurement ADR 0001 defers to, and it needs the tick loop.
 
    **Half answered: the transport is not the limit.** A transform round-trip runs a median 0.27ms against a 33ms budget, so if the motion looks stepped the cause is the tick cadence or the easing curve, not OBS. The `max 7.41ms` tail is why coalescing stays anyway — it is cheap, and a stall under load is exactly when a backlog would hurt.
+
+   **And a second suspect, found by the swap-R check rather than by eye.** The ease is smoothstep in *zoom*, but what the viewer sees is the visible region, which goes as `1 - 1/zoom`. That is concave, so the apparent motion is **front-loaded**: it lunges out of the start and crawls into the end, even though the zoom value itself is symmetric. If the motion reads as uneven rather than stepped, easing in log-zoom is the fix, not a faster tick. Left alone until [lookit-xm1] says whether it is visible.
