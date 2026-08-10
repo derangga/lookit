@@ -1436,6 +1436,90 @@ do {
     }
 }
 
+// MARK: - One tick
+
+print("framing / reframed")
+
+do {
+    // The real geometry: Helium at 1496x929 on a 2x display, captured at
+    // 2992x1858 source pixels.
+    let rect = CaptureRect(x: 100, y: 60, width: 1496, height: 929, scale: 2)
+    let source = SourceSize(width: 2992, height: 1858)
+    let middle = SourcePoint(x: 1496, y: 929)
+
+    // At 1x the whole source is visible, so nothing is cropped however the
+    // cursor moves. This is what makes "at rest" cost nothing.
+    let atRest = framing(
+        cursor: ScreenPoint(x: 150, y: 100), rect: rect, source: source,
+        zoom: 1, center: middle, deadZone: 0.6
+    )
+    expect(atRest.crop == .zero, "1x crops nothing")
+
+    // Cursor outside the captured window: hold, do not snap.
+    let outside = framing(
+        cursor: ScreenPoint(x: 5, y: 5), rect: rect, source: source,
+        zoom: 2, center: middle, deadZone: 0.6
+    )
+    expect(outside.pan == .frozen, "a cursor off the window freezes the shot")
+    expect(outside.center == middle, "and the centre does not move")
+
+    // Inside, but within the dead zone: also holds, for a different reason.
+    let inDeadZone = framing(
+        cursor: ScreenPoint(x: 100 + 748, y: 60 + 464), rect: rect, source: source,
+        zoom: 2, center: middle, deadZone: 0.6
+    )
+    expect(inDeadZone.pan == .following, "a cursor on the window is followed")
+    expect(inDeadZone.center == middle, "but the dead zone means it does not drift")
+
+    // Cursor pushed to the far corner: the shot moves, and stays inside.
+    let corner = framing(
+        cursor: ScreenPoint(x: 100 + 1490, y: 60 + 925), rect: rect, source: source,
+        zoom: 2, center: middle, deadZone: 0.6
+    )
+    expect(corner.center.x > middle.x && corner.center.y > middle.y, "the shot follows")
+    let region = visibleRegion(source: source, zoom: 2, center: corner.center)
+    expect(
+        region.origin.x >= 0 && region.origin.y >= 0
+            && region.origin.x + region.size.width <= source.width
+            && region.origin.y + region.size.height <= source.height,
+        "and never leaves the source"
+    )
+    expect(corner.crop.right >= 0 && corner.crop.bottom >= 0, "so the crop is never negative")
+
+    // reframed: bounds are what stop a crop from shrinking the item on canvas.
+    let unbounded = Transform(
+        positionX: 0, positionY: 0, scaleX: 1, scaleY: 1, rotation: 0, alignment: 5,
+        boundsType: "OBS_BOUNDS_NONE", boundsAlignment: 0, boundsWidth: 0, boundsHeight: 0,
+        cropLeft: 0, cropRight: 0, cropTop: 0, cropBottom: 0,
+        sourceWidth: 2992, sourceHeight: 1858, width: 2992, height: 1858
+    )
+    let crop = CropInsets(left: 100, top: 50, right: 100, bottom: 50)
+    let fixed = reframed(unbounded, crop: crop)
+    expect(fixed.boundsType == "OBS_BOUNDS_SCALE_INNER", "an unbounded item gains bounds")
+    expect(
+        fixed.boundsWidth == 2992 && fixed.boundsHeight == 1858,
+        "sized to the rectangle it already occupied, so the layout does not jump"
+    )
+
+    let bounded = reframed(sampleTransform, crop: crop)
+    expect(
+        bounded.boundsType == sampleTransform.boundsType
+            && bounded.boundsWidth == sampleTransform.boundsWidth,
+        "an item the user already bounded is left alone"
+    )
+    expect(
+        bounded.cropLeft == 100 && bounded.cropTop == 50
+            && bounded.cropRight == 100 && bounded.cropBottom == 50,
+        "and only the crop changes"
+    )
+    expect(
+        bounded.positionX == sampleTransform.positionX
+            && bounded.scaleX == sampleTransform.scaleX
+            && bounded.rotation == sampleTransform.rotation,
+        "position, scale and rotation are the user's, never lookit's"
+    )
+}
+
 print("")
 if failures == 0 {
     print("all checks passed")

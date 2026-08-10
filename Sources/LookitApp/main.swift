@@ -17,6 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var watcher: ConfigWatcher?
     private var connection: OBSConnection?
     private var scope: DirtyScope?
+    private var sender: TransformSender?
+    private var tickTask: Task<Void, Never>?
+    /// The zoom the ease is heading for, and where it started from.
+    private var targetZoom = 1.0
+    private var easeFrom = 1.0
+    private var easeStartedAt = Date.distantPast
+    /// Where the shot is centred, in source pixels.
+    private var center = SourcePoint(x: 0, y: 0)
     private var connectionState: Connection = .disconnected(.notStarted)
     private var obsVersion: String?
     /// Nil until the first resolve runs. hudStatus reads nil as "nothing to
@@ -63,6 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try await connection.call(
                 "SetSceneItemTransform", SetSceneItemTransformRequest(pristine)
             )
+        }
+        sender = TransformSender { request throws(ObsError) in
+            try await connection.call("SetSceneItemTransform", request)
         }
     }
 
@@ -127,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// If the release fails the scope stays dirty, and `acquire` then refuses
     /// the new target rather than leaving two items altered.
     private func switchScene() async {
+        stopTicking()
         await releaseScope()
         zoom = config.stops.first ?? 1.0
         hud?.setZoom(zoom)
@@ -255,6 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tick loop reframes from the zoom level, so a durable pristine must
         // exist before the level can say "not 1x". A journal that will not
         // write means no zoom at all — this is a precondition, not best effort.
+        let wasHeld = scope.isDirty
         if next > resting {
             do {
                 try scope.acquire(target)
@@ -268,13 +281,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        zoom = next
-        hud?.setZoom(zoom)
-        refresh()
+        // Ease from wherever the zoom actually is, not from the stop it was
+        // heading for — pressing the key mid-animation must not snap.
+        easeFrom = zoom
+        targetZoom = next
+        easeStartedAt = Date()
 
-        // Back to rest: give the scope back rather than holding a journal for a
-        // scene item that is no longer reframed.
-        if next == resting { Task { [weak self] in await self?.releaseScope() } }
+        if next > resting {
+            // A fresh acquisition starts centred; an ongoing one keeps its pan.
+            if !wasHeld { center = centreOf(target) }
+            startTicking()
+        }
+        refresh()
+    }
+
+    private func centreOf(_ target: Target) -> SourcePoint {
+        let source = target.transform.sourceSize ?? SourceSize(width: 0, height: 0)
+        return SourcePoint(x: source.width / 2, y: source.height / 2)
+    }
+
+    // MARK: - The tick loop
+
+    /// 30Hz, and only while something is actually zoomed. At rest there is
+    /// nothing to animate and nothing to send, so the loop stops rather than
+    /// spinning on an idle machine.
+    private func startTicking() {
+        guard tickTask == nil else { return }
+        tickTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.tick()
+                // 30Hz because the canvas is 30fps; 60 would double the traffic
+                // for no visible gain.
+                try? await Task.sleep(for: .milliseconds(33))
+            }
+        }
+    }
+
+    private func stopTicking() {
+        tickTask?.cancel()
+        tickTask = nil
+    }
+
+    private func tick() {
+        guard
+            let target = target?.target, let sender,
+            case let .dirty(pristine) = scope?.state,
+            let source = pristine.transform.sourceSize
+        else { return stopTicking() }
+
+        let elapsed = Date().timeIntervalSince(easeStartedAt) * 1000
+        zoom = eased(from: easeFrom, to: targetZoom, progress: elapsed / Double(max(config.easeMs, 1)))
+        hud?.setZoom(zoom)
+
+        // Re-read every tick: the window moves, and a window that has gone away
+        // — or whose id was recycled to another app — must stop the zoom rather
+        // than frame something else.
+        guard let rect = WindowLocator.live(expecting: target.bundleID).locate(target.window) else {
+            self.target = .unresolved(.windowGone)
+            settle()
+            return
+        }
+
+        let framed = framing(
+            cursor: cursorPosition(), rect: rect, source: source,
+            zoom: zoom, center: center, deadZone: config.deadZone
+        )
+        center = framed.center
+        sender.post(
+            SetSceneItemTransformRequest(
+                scene: pristine.scene, itemId: pristine.itemId,
+                transform: reframed(pristine.transform, crop: framed.crop)
+            )
+        )
+
+        // Settled back at rest: the ease is done, so give the scope back. Doing
+        // this on the keypress instead would restore the pristine instantly and
+        // the zoom-out would never be seen.
+        let resting = config.stops.first ?? 1.0
+        if targetZoom <= resting, zoom <= resting { settle() }
+    }
+
+    private func settle() {
+        stopTicking()
+        Task { [weak self] in
+            await self?.releaseScope()
+            self?.refresh()
+        }
     }
 
     private func releaseScope() async {
