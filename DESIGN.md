@@ -240,7 +240,20 @@ Established by inspection, not assumption:
 
 1. ~~Does `GetInputSettings` return a live or **stale** window id after the captured app relaunches?~~ **Answered, and worse than expected — already handled.**
 
-   Read live over the websocket, the `chrome` source returns `application: com.google.Chrome`, `window: 384`. Id `384` on this machine resolves to a live **Helium** window. Window ids are *recycled*: a stale id does not fail, it names someone else's window. `WindowLocator.live` therefore validates the owner's bundle id, and a mismatch degrades to Unresolved.
+   Read live over the websocket, the `chrome` source returns `application: com.google.Chrome`, `window: 384`. Id `384` on this machine resolves to a live **Helium** window. Window ids are *recycled*: a stale id does not fail, it names someone else's window.
+
+   **Both halves confirmed, and the obvious fix was wrong.** Watched across a re-pick:
+
+   | | before re-pick | after re-pick |
+   |---|---|---|
+   | `window` | `219` — dead, no such window | `46` — live |
+   | `application` | `com.google.Chrome` | `com.google.Chrome` |
+   | source pixels | `0 × 0` | `2992 × 1858` |
+   | window 46 truly is | — | `net.imput.helium`, 1496×929 @2x |
+
+   So the id **does** go stale, and OBS **does** keep the source size honest — a dead capture reports `0 × 0`. But `application` is **vestigial**: it survives a re-pick onto a different browser and describes application-capture mode, not this source. Validating the owner against *OBS's* bundle id would therefore reject the correct window forever.
+
+   The bundle id to validate against must come from the **window server** at resolve time, never from OBS. The id itself is cross-checked at resolve by comparing the window's backing-pixel size against the source size OBS reports.
 
 2. ~~Is `NSWindow.sharingType = .none` honoured by ScreenCaptureKit on macOS 15?~~ **Answered: yes.** `./scripts/verify-hud-not-captured.sh` captures the same region twice, once with the panel deliberately capturable and once normally, and fails if they match. On macOS 15.7.7 the HUD is present in the first and absent in the second.
 
