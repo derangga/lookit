@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var connection: OBSConnection?
     private var connectionState: Connection = .disconnected(.notStarted)
     private var obsVersion: String?
+    /// Nil until target resolution exists — which is blocked on the user
+    /// re-picking the window in OBS. hudStatus reads nil as "nothing to say".
+    private var target: TargetState?
     private var zoom = 1.0
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -43,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The only window onto a menubar app run from a terminal. One line
             // per transition, not a log framework.
             FileHandle.standardError.write(Data("lookit: \(state.message)\n".utf8))
-            self?.refreshMenu()
+            self?.refresh()
             if state.isUsable { self?.onIdentified() }
         } onEvent: { [weak self] event in
             self?.handle(event)
@@ -77,9 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } catch {
             warnings.append(ConfigWarning(key: "restore", detail: error.message))
-            hud?.setStatus(error.message)
             FileHandle.standardError.write(Data("lookit: \(error.message)\n".utf8))
-            refreshMenu()
+            refresh()
         }
     }
 
@@ -100,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let version = try? await connection.call("GetVersion", NoBody(), as: ObsVersion.self)
         obsVersion = version?.obsVersion
         FileHandle.standardError.write(Data("lookit: OBS \(version?.obsVersion ?? "?")\n".utf8))
-        refreshMenu()
+        refresh()
     }
 
     // MARK: - Config
@@ -144,8 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .rejected(reason):
             // Invariant 6: keep the last-good config and say what is wrong.
             warnings = [ConfigWarning(key: "config", detail: reason)]
-            refreshMenu()
-            hud?.setStatus("config: \(reason)")
+            refresh()
             return
         }
 
@@ -159,8 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hud?.setZoom(zoom)
         }
 
-        hud?.setStatus(warnings.isEmpty ? nil : warnings[0].detail)
-        refreshMenu()
+        refresh()
     }
 
     private func installConfiguredHotkeys() {
@@ -185,9 +185,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         hud.setStops(config.stops)
         hud.setZoom(zoom)
-        // Warnings raised during launch must reach the HUD too, not just the
-        // menu — the reload path is not the only way to end up with one.
-        hud.setStatus(warnings.first?.detail)
         hud.show()
         self.hud = hud
     }
@@ -196,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config.hud = Config.HUD(x: origin.x, y: origin.y)
         if let warning = configStore.save(config) {
             warnings.append(warning)
-            refreshMenu()
+            refresh()
         }
     }
 
@@ -210,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .reset: zoom = config.stops.first ?? 1.0
         }
         hud?.setZoom(zoom)
-        refreshMenu()
+        refresh()
     }
 
     // MARK: - Status item
@@ -222,10 +219,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         item.menu = NSMenu()
         statusItem = item
-        refreshMenu()
+        refresh()
     }
 
-    private func refreshMenu() {
+    /// Both surfaces, always together. Every state change routes here, which is
+    /// why nothing has to remember to update the HUD on its own — the bug that
+    /// let a config warning silently overwrite a restore failure.
+    private func refresh() {
+        hud?.setStatus(hudStatus(connection: connectionState, target: target, warnings: warnings))
+
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()
 

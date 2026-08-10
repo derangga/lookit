@@ -1192,6 +1192,72 @@ do {
     expect(sender.lastFailure == nil, "and cleared by the next frame that lands")
 }
 
+// MARK: - What the HUD says
+
+print("hudStatus")
+
+do {
+    let ok = Connection.identified
+    let resolved = TargetState.resolved(
+        Target(
+            scene: SceneName("Scene Browser"), itemId: SceneItemId(3),
+            inputName: InputName("chrome"), window: WindowID(384),
+            bundleID: "net.imput.helium", transform: sampleTransform
+        )
+    )
+    let badKey = ConfigWarning(key: "keys.zoomIn", detail: "unknown modifier")
+
+    expect(
+        hudStatus(connection: ok, target: resolved, warnings: []) == nil,
+        "connected and resolved says nothing at all"
+    )
+
+    // Every escape in the E channel has to land somewhere.
+    expect(
+        hudStatus(connection: .disconnected(.serverDisabled), target: nil, warnings: [])
+            == "Enable OBS → Tools → WebSocket Server Settings",
+        "a disabled server says which box to tick"
+    )
+    expect(
+        hudStatus(connection: .disconnected(.authFailed), target: nil, warnings: [])
+            == "Wrong password — fix obs.password in the config",
+        "a wrong password says so, since nothing will retry it"
+    )
+    expect(
+        hudStatus(connection: ok, target: .unresolved(.windowGone), warnings: [])
+            == "The captured window is gone — re-pick it in OBS",
+        "an unresolved target says why"
+    )
+    expect(
+        hudStatus(connection: ok, target: resolved, warnings: [badKey])
+            == "keys.zoomIn: unknown modifier",
+        "a config warning surfaces when nothing worse is wrong"
+    )
+
+    // The ranking. Several of these are true at once on a bad launch, and the
+    // HUD has one line: show what is stopping the user first.
+    expect(
+        hudStatus(connection: .connecting, target: .unresolved(.notConnected), warnings: [badKey])
+            == "Connecting to OBS…",
+        "the connection outranks everything — nothing else can work without it"
+    )
+    expect(
+        hudStatus(connection: ok, target: .unresolved(.noCaptureInScene), warnings: [badKey])
+            == "No screen capture in this scene",
+        "and an unresolved target outranks a warning that only degrades things"
+    )
+
+    // Regression: a restore failure arrives as a warning, and used to be
+    // overwritten by whichever setStatus call ran last.
+    expect(
+        hudStatus(
+            connection: ok, target: resolved,
+            warnings: [ConfigWarning(key: "restore", detail: RestoreError.notCleared("denied").message)]
+        )?.contains("Layout restored") == true,
+        "a restore failure is not lost behind a later status update"
+    )
+}
+
 print("")
 if failures == 0 {
     print("all checks passed")

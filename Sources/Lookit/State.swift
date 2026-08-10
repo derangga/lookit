@@ -152,6 +152,27 @@ extension UnresolvedReason {
     }
 }
 
+// MARK: - What the HUD says
+
+/// The one line the HUD has room for, or nil when nothing is wrong.
+///
+/// Several things can be degraded at once, and the HUD fits one line, so they
+/// are ranked by what is stopping the user first: a target cannot resolve
+/// without a connection, and a warning about a keybinding matters less than
+/// either. Pure, so the ranking is checkable and cannot drift between the
+/// places that used to each call setStatus for themselves.
+public func hudStatus(
+    connection: Connection,
+    target: TargetState?,
+    warnings: [ConfigWarning]
+) -> String? {
+    if connection != .identified { return connection.message }
+    if case let .unresolved(reason) = target { return reason.message }
+    // Not blocking — a bad keybinding still leaves the HUD buttons working —
+    // so it comes last, but it must still be said.
+    return warnings.first.map { "\($0.key): \($0.detail)" }
+}
+
 // MARK: - Pan
 
 public enum PanState: Equatable, Sendable {
