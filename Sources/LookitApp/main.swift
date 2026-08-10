@@ -223,6 +223,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             perform: { [weak self] action in self?.perform(action) }
         )
         warnings.append(contentsOf: hotkeyWarnings)
+        // A hotkey the system refused was previously only visible by opening
+        // the menu, which is a silent failure for a background app.
+        for warning in hotkeyWarnings {
+            FileHandle.standardError.write(
+                Data("lookit: ⚠ \(warning.key): \(warning.detail)\n".utf8)
+            )
+        }
     }
 
     // MARK: - HUD
@@ -257,7 +264,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// share it. No Target, no reframe: not a partial one, not a crop applied
     /// with nothing to restore it from.
     private func perform(_ action: HotkeyAction) {
-        guard let target = target?.target, let scope else { return }
+        guard let target = target?.target, let scope else {
+            FileHandle.standardError.write(
+                Data("lookit: \(action.rawValue) ignored — nothing to zoom\n".utf8)
+            )
+            return
+        }
 
         let resting = config.stops.first ?? 1.0
         // From where the zoom actually is — the loop owns that once it is
@@ -292,6 +304,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        FileHandle.standardError.write(
+            Data("lookit: \(action.rawValue) → \(next)× on \(pristine.inputName.raw)\n".utf8)
+        )
         let loop = self.loop ?? makeLoop()
         self.loop = loop
         loop.aim(at: next, pristine: pristine, window: target.window)

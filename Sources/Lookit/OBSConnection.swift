@@ -185,17 +185,34 @@ public final class OBSConnection {
 
         nextRequestId += 1
         let id = String(nextRequestId)
-
-        try await send(
-            RequestEnvelope(d: .init(requestType: requestType, requestId: id, requestData: body)),
-            on: socket
+        let envelope = RequestEnvelope(
+            d: .init(requestType: requestType, requestId: id, requestData: body)
         )
 
-        // ponytail: no timeout. Every way OBS can fail to answer that has been
-        // observed goes through the socket, and failPending covers those. Add
-        // one if a request is ever seen to vanish with the socket still up.
+        // The waiter is installed BEFORE the request goes out, and that order is
+        // the whole point.
+        //
+        // Sending first looks natural and is a deadlock: `send` suspends, the
+        // main actor runs `pump`, OBS's op 7 arrives — round trips here run
+        // 0.27ms — and `dispatch` drops it because nobody is registered for that
+        // id yet. The continuation installed a moment later then waits forever,
+        // which wedges every caller behind it. Seen in the wild: the tick loop
+        // posted 2,500 frames with no error while OBS received none of them.
+        //
+        // The body below runs synchronously on this actor, so registration is
+        // complete before the Task that sends can start.
         let result: Result<Data, ObsError> = await withCheckedContinuation { continuation in
             pending[id] = continuation
+            Task { [weak self] in
+                guard let self else { return }
+                do throws(ObsError) {
+                    try await send(envelope, on: socket)
+                } catch {
+                    // Nothing is coming, so answer this one caller rather than
+                    // leaving it suspended.
+                    pending.removeValue(forKey: id)?.resume(returning: .failure(error))
+                }
+            }
         }
         let data = try result.get()
 
