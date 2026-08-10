@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hud: HUD?
     private var watcher: ConfigWatcher?
     private var connection: OBSConnection?
+    private var scope: DirtyScope?
     private var connectionState: Connection = .disconnected(.notStarted)
     private var obsVersion: String?
     /// Nil until the first resolve runs. hudStatus reads nil as "nothing to
@@ -32,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         connect()
     }
 
+    /// No release on quit, deliberately. Termination cannot await a round-trip
+    /// to OBS, and a journal left on disk is exactly what restore-on-launch
+    /// exists to consume. Trying to be tidy here would risk a half-write.
     func applicationWillTerminate(_: Notification) {
         HotkeyCenter.shared.unregisterAll()
         connection?.stop()
@@ -53,6 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         connection.start(config.obs)
         self.connection = connection
+        // The scope needs a live connection to put the pristine back, so it is
+        // built here rather than at launch.
+        scope = DirtyScope(journal: journal) { pristine throws(ObsError) in
+            try await connection.call(
+                "SetSceneItemTransform", SetSceneItemTransformRequest(pristine)
+            )
+        }
     }
 
     /// Restore comes before anything else touches the scene, per §2.
@@ -221,15 +232,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// share it. No Target, no reframe: not a partial one, not a crop applied
     /// with nothing to restore it from.
     private func perform(_ action: HotkeyAction) {
-        guard target?.target != nil else { return }
+        guard let target = target?.target, let scope else { return }
 
-        switch action {
-        case .zoomIn: zoom = nextStop(stops: config.stops, from: zoom, direction: 1)
-        case .zoomOut: zoom = nextStop(stops: config.stops, from: zoom, direction: -1)
-        case .reset: zoom = config.stops.first ?? 1.0
+        let resting = config.stops.first ?? 1.0
+        let next =
+            switch action {
+            case .zoomIn: nextStop(stops: config.stops, from: zoom, direction: 1)
+            case .zoomOut: nextStop(stops: config.stops, from: zoom, direction: -1)
+            case .reset: resting
+            }
+
+        // Invariant 1, and the reason this runs before `zoom` is assigned: the
+        // tick loop reframes from the zoom level, so a durable pristine must
+        // exist before the level can say "not 1x". A journal that will not
+        // write means no zoom at all — this is a precondition, not best effort.
+        if next > resting {
+            do {
+                try scope.acquire(target)
+            } catch {
+                warnings.append(ConfigWarning(key: "journal", detail: error.message))
+                FileHandle.standardError.write(
+                    Data("lookit: refusing to zoom — \(error.message)\n".utf8)
+                )
+                refresh()
+                return
+            }
         }
+
+        zoom = next
         hud?.setZoom(zoom)
         refresh()
+
+        // Back to rest: give the scope back rather than holding a journal for a
+        // scene item that is no longer reframed.
+        if next == resting { Task { [weak self] in await self?.releaseScope() } }
+    }
+
+    private func releaseScope() async {
+        guard let scope else { return }
+        do {
+            try await scope.release()
+        } catch {
+            warnings.append(ConfigWarning(key: "restore", detail: error.message))
+            FileHandle.standardError.write(Data("lookit: \(error.message)\n".utf8))
+            refresh()
+        }
     }
 
     // MARK: - Status item

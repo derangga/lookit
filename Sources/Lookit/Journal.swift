@@ -69,6 +69,18 @@ public enum JournalError: Error, Equatable, Sendable {
     case deleteFailed(String)
 }
 
+extension JournalError {
+    /// What to tell the user. A zoom that refuses itself silently looks broken,
+    /// so the reason has to be sayable.
+    public var message: String {
+        switch self {
+        case let .writeFailed(detail): "Cannot save your layout, so not zooming — \(detail)"
+        case let .corrupt(detail): "The saved layout is unreadable — \(detail)"
+        case let .deleteFailed(detail): "Could not clear the saved layout — \(detail)"
+        }
+    }
+}
+
 // MARK: - Store
 
 public struct JournalStore: Sendable {
