@@ -13,6 +13,11 @@ public final class HUD {
     private let statusLabel = NSTextField(labelWithString: "")
     /// Held rather than built inline so it can be greyed when OBS is absent.
     private lazy var obsButton = plainButton("video.fill", "Open OBS", #selector(obsTapped))
+    /// Held so its symbol can follow the state, and so it can carry the status
+    /// text that has nowhere to go while the preview is collapsed.
+    private lazy var previewButton = plainButton(
+        "eye", "Hide preview", #selector(previewTapped)
+    )
     /// Held so its title can follow the zoom and its menu can mark the stop.
     private lazy var zoomButton = buildZoomButton()
     /// Kept so a stops reload can restore the menu's checkmark to where the
@@ -22,6 +27,14 @@ public final class HUD {
     private let previewView = NSImageView()
     /// Swapped whenever the canvas shape changes, so the box always matches it.
     private var previewAspect: NSLayoutConstraint?
+    /// What ties the row's width to the preview's. Released while collapsed —
+    /// hiding the box is not enough on its own, since this constraint would go
+    /// on holding the row at the preview's width with no preview there.
+    private var rowMatchesPreview: NSLayoutConstraint?
+    private var previewVisible = true
+    /// Kept so it can be shown again when the preview comes back, and so the
+    /// collapsed chip can carry it as a tooltip meanwhile.
+    private var status: String?
     private let perform: (HotkeyAction) -> Void
     /// Go straight to a stop. Separate from `perform` because a stop is a value,
     /// not one of the three named actions, and HotkeyAction must stay a plain
@@ -30,6 +43,8 @@ public final class HUD {
     private let onMove: (CGPoint) -> Void
     private let onQuit: () -> Void
     private let onActivateOBS: () -> Void
+    /// So the frame feed can stop while there is nothing to show it in.
+    private let onPreviewVisible: (Bool) -> Void
 
     private var stops: [Double] = Config.fallback.stops
     /// Kept so the controls can be greyed out when there is nothing to zoom.
@@ -41,13 +56,15 @@ public final class HUD {
         jump: @escaping (Double) -> Void,
         onMove: @escaping (CGPoint) -> Void,
         onQuit: @escaping () -> Void,
-        onActivateOBS: @escaping () -> Void
+        onActivateOBS: @escaping () -> Void,
+        onPreviewVisible: @escaping (Bool) -> Void
     ) {
         self.perform = perform
         self.jump = jump
         self.onMove = onMove
         self.onQuit = onQuit
         self.onActivateOBS = onActivateOBS
+        self.onPreviewVisible = onPreviewVisible
 
         panel = NSPanel(
             // Provisional: buildContent sizes the panel to its content, and
@@ -117,9 +134,14 @@ public final class HUD {
         // pressed mid-demo.
         let gap = NSView()
         gap.setContentHuggingPriority(.init(1), for: .horizontal)
+        // Collapsed there is no preview width to spend, so the gap would close
+        // and put quit against the cluster. A floor keeps the separation the
+        // slack used to provide; expanded it is never the binding constraint.
+        gap.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
 
         let controls = NSStackView(views: [
             plainButton("xmark", "Quit lookit", #selector(quitTapped)),
+            previewButton,
             gap,
             obsButton,
             button("arrow.counterclockwise", .reset),
@@ -133,7 +155,8 @@ public final class HUD {
         let stack = NSStackView(views: [preview, controls])
         // Without this the row shrinks to its content and centres, and the gap
         // has no slack to push quit away from the cluster.
-        controls.widthAnchor.constraint(equalTo: preview.widthAnchor).isActive = true
+        rowMatchesPreview = controls.widthAnchor.constraint(equalTo: preview.widthAnchor)
+        rowMatchesPreview?.isActive = true
         stack.orientation = .vertical
         stack.spacing = 4
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 10)
@@ -294,6 +317,25 @@ public final class HUD {
 
     @objc private func quitTapped() { onQuit() }
     @objc private func obsTapped() { onActivateOBS() }
+    @objc private func previewTapped() { setPreviewVisible(!previewVisible) }
+
+    /// Collapse the panel down to its control row, or bring the preview back.
+    ///
+    /// The frame feed is told either way: polling OBS for a picture nobody can
+    /// see is the one part of this that costs something.
+    private func setPreviewVisible(_ visible: Bool) {
+        previewVisible = visible
+        previewBox.isHidden = !visible
+        rowMatchesPreview?.isActive = visible
+        let help = visible ? "Hide preview" : "Show preview"
+        previewButton.image = NSImage(
+            systemSymbolName: visible ? "eye" : "eye.slash", accessibilityDescription: help
+        )
+        previewButton.toolTip = help
+        applyStatus()
+        resizeToFit()
+        onPreviewVisible(visible)
+    }
 
     /// Offer the stops, marking the one the zoom is nearest.
     ///
@@ -415,10 +457,21 @@ public final class HUD {
     /// No resize: the panel is one size in every state now, so a warning
     /// arriving cannot make the HUD jump under the cursor.
     public func setStatus(_ text: String?) {
-        statusLabel.stringValue = text ?? ""
-        statusLabel.isHidden = text == nil
-        statusLabel.toolTip = text  // the full text, since three lines can truncate
-        previewView.isHidden = text != nil
+        status = text
+        applyStatus()
+    }
+
+    private func applyStatus() {
+        statusLabel.stringValue = status ?? ""
+        statusLabel.isHidden = status == nil
+        statusLabel.toolTip = status  // the full text, since three lines can truncate
+        previewView.isHidden = status != nil
+        // Collapsed, the box that says what is wrong is not on screen. The chip
+        // that put it away carries the text instead, so a HUD minimised mid-demo
+        // cannot swallow "not connected to OBS" with nowhere left to show it.
+        if !previewVisible {
+            previewButton.toolTip = status ?? "Show preview"
+        }
     }
 
     /// A frame, or nil for none. `dimmed` marks a frame that has stopped

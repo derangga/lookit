@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// say about the target yet", which is different from unresolved.
     private var target: TargetState?
     private var zoom = 1.0
+    /// Always true at launch: the collapsed state is not persisted.
+    private var previewVisible = true
 
     func applicationDidFinishLaunching(_: Notification) {
         loadConfig()
@@ -86,7 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scene: { [weak self] in self?.target?.target?.scene },
             show: { [weak self] image, dimmed in self?.hud?.setPreview(image, dimmed: dimmed) }
         )
-        preview.start()
+        // A reconnect while the HUD is collapsed must not quietly restart the
+        // feed behind a hidden box.
+        if previewVisible { preview.start() }
         self.preview = preview
     }
 
@@ -269,7 +273,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             jump: { [weak self] stop in self?.apply(zoom: stop, because: "stop") },
             onMove: { [weak self] origin in self?.saveHUDPosition(origin) },
             onQuit: { [weak self] in self?.quit() },
-            onActivateOBS: { [weak self] in self?.activateOBS() }
+            onActivateOBS: { [weak self] in self?.activateOBS() },
+            onPreviewVisible: { [weak self] visible in self?.showPreview(visible) }
         )
         hud.setOBSAvailable(
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: obsBundleIdentifier) != nil
@@ -278,6 +283,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.setZoom(zoom)
         hud.show()
         self.hud = hud
+    }
+
+    /// The HUD collapsed or expanded its preview. Nothing else changes: the
+    /// feed is decoration, so stopping it cannot affect the zoom.
+    private func showPreview(_ visible: Bool) {
+        previewVisible = visible
+        guard let preview else { return }
+        if visible {
+            // Otherwise the first frame back is up to half a second away, and
+            // the box sits empty long enough to look broken.
+            preview.bump()
+            preview.start()
+        } else {
+            preview.stop()
+        }
     }
 
     private func saveHUDPosition(_ origin: CGPoint) {
