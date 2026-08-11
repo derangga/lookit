@@ -14,6 +14,8 @@ What it gives you:
 - **Zoom that snaps to stops.** You do not get a continuous zoom slider, you get a small list of levels such as 1x, 1.5x, 2x and 3x. Each hotkey press moves one step along that list, which means the framing in your recording is consistent instead of slightly different every time.
 - **Smooth motion.** Every zoom change is eased over a few hundred milliseconds rather than jumping, and the panning is eased the same way, so the result looks like a camera move and not like a teleport.
 - **A floating HUD.** A small always-visible panel shows the current zoom level, a live preview of the OBS program scene, and buttons that do the same thing as the hotkeys. It never steals keyboard focus when you click it, so clicking it does not interrupt whatever you are demonstrating, and it is marked as non-capturable so it never shows up in the recording itself.
+- **Scene switching without leaving what you are doing.** The HUD has a scene picker listing every scene in OBS with the live one ticked, so going from your demo scene to a talking-head scene mid-recording does not mean finding the OBS window. Switching from here is the same switch as switching in OBS, restore of the outgoing scene item included.
+- **A HUD you can put away.** One click collapses the preview and leaves just the row of controls, for when you want the panel out of your way but still want to reach the zoom. Collapsing also stops the preview feed, so a put-away HUD asks OBS for nothing at all.
 - **Your OBS layout is never damaged.** Before lookit changes any framing, it writes the original framing of that scene item to a file on disk. If lookit crashes, if you force quit it, or if OBS goes down first, the next launch finds that file and puts your scene item back exactly as it was.
 - **The face cam is never zoomed.** lookit picks what to zoom by looking at the kind of input each scene item uses, so a camera item is skipped permanently. It cannot accidentally crop into your face.
 - **Live config reload.** The settings file is watched while lookit runs, so you can retune the zoom stops, the easing duration, the dead zone or the hotkeys in the middle of a session and see the change take effect immediately. A broken settings file never takes the app down, it keeps the last working settings and shows you a warning about what is wrong.
@@ -157,7 +159,9 @@ Everything else is an ordinary value flowing through the program rather than an 
 
 The floating panel has two properties that are not negotiable. It must not take keyboard focus when you click it, because taking focus in the middle of a live demo would interrupt whatever you were showing. And it must never appear in the capture, which is achieved by marking the window as not shareable. That second one was verified rather than assumed: `scripts/verify-hud-not-captured.sh` captures the same region of the screen twice, once with the panel deliberately made capturable and once normally, and fails if the two images match.
 
-The preview inside the HUD is a separate read-only feed from OBS that never writes anything. If it fails, the zoom is completely unaffected, which is the property that matters for a decorative feature attached to a tool that has a promise about not damaging your layout.
+The preview inside the HUD is a separate read-only feed from OBS that never writes anything. If it fails, the zoom is completely unaffected, which is the property that matters for a decorative feature attached to a tool that has a promise about not damaging your layout. Collapsing the preview stops that feed rather than merely hiding it, because a picture nobody can see is not worth a round trip twice a second.
+
+The scene picker keeps a cached list of scenes rather than asking OBS when you click it, because a macOS menu opens synchronously and there is no point in the click where a network round trip could be waited on. The list is re-read whenever OBS says a scene was added, removed or reordered, and whenever the live scene changes. Picking a scene sends the switch to OBS and then does nothing else: OBS announces the change back, and lookit reacts to that announcement exactly as it does to a switch you made in OBS yourself, so the outgoing scene item is restored on the same path either way.
 
 ## Building from source
 
@@ -165,8 +169,30 @@ lookit is a Swift Package Manager project. There are no third party dependencies
 
 ### Prerequisites
 
-- Xcode or the Xcode Command Line Tools, providing Swift 6.0 or newer. Swift itself must come from the system toolchain, because this is a macOS app that links AppKit and Carbon and the Xcode SDK is the only thing that reliably provides those.
-- Optionally [Nix](https://nixos.org/), if you want the same development shell the project was built in.
+You need Swift 6.0 or newer from the **system** toolchain. Nothing else: there are no third party packages to fetch, so the build runs offline, and `bundle.sh` uses only `iconutil` and `codesign`, which come with the same install.
+
+Check what you have:
+
+```bash
+swift --version       # want: Apple Swift version 6.x
+```
+
+If that fails or reports an older Swift, install one of:
+
+- **The Xcode Command Line Tools**, which is the smaller of the two and enough on its own — it ships Swift, the macOS SDK, `iconutil` and `codesign`:
+
+  ```bash
+  xcode-select --install
+  ```
+
+- **Xcode**, from the App Store, if you want it anyway. Point the tools at it with `sudo xcode-select -s /Applications/Xcode.app`.
+
+Two things worth knowing before you start:
+
+- Swift must be the Apple toolchain, not one from Homebrew or a package manager. This app links AppKit and Carbon, and the Xcode SDK is the only thing that reliably provides those. If a `swift` from somewhere else is first on your `PATH`, the build fails in ways that look unrelated.
+- Swift 6 arrived in Xcode 16, which needs a recent macOS to install. So you may need a newer macOS to *build* lookit than to *run* it — the built app itself is happy on macOS 13.
+
+[Nix](https://nixos.org/) is optional. `nix develop` gives you the same shell the project was built in, which adds `swiftformat` and `jq` for development; it does not provide Swift, for the reason above.
 
 ### Steps
 
