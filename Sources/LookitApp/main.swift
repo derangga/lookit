@@ -64,7 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // per transition, not a log framework.
             FileHandle.standardError.write(Data("lookit: \(state.message)\n".utf8))
             self?.refresh()
-            if state.isUsable { self?.onIdentified() }
+            if state.isUsable {
+                self?.onIdentified()
+            } else {
+                // Scenes belong to a live connection. Offering the last ones
+                // seen would be offering switches that silently fail.
+                self?.hud?.setScenes([], current: nil)
+            }
         } onEvent: { [weak self] event in
             self?.handle(event)
         }
@@ -100,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await self?.restoreDirtyLayout()
             await self?.readVersion()
             await self?.readCanvas()
+            await self?.readScenes()
             await self?.resolve()
         }
     }
@@ -148,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .sceneChanged(scene):
             FileHandle.standardError.write(Data("lookit: scene → \(scene.raw)\n".utf8))
             Task { [weak self] in await self?.switchScene() }
+        case .sceneListChanged:
+            Task { [weak self] in await self?.readScenes() }
         }
     }
 
@@ -163,6 +172,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await releaseScope()
         zoom = config.stops.first ?? 1.0
         hud?.setZoom(zoom)
+        // Only to move the checkmark: the list itself has not changed, but the
+        // scene it marks has.
+        await readScenes()
         await resolve()
     }
 
@@ -177,6 +189,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         else { return }
         hud?.setCanvasAspect(width: video.baseWidth, height: video.baseHeight)
+    }
+
+    /// The scenes the HUD offers. Read here rather than at click time because a
+    /// menu cannot wait on a round trip; refreshed whenever OBS says the list or
+    /// the program scene moved.
+    ///
+    /// Failing is harmless: an empty list leaves the chip offering "Open OBS",
+    /// which is what it did before it could switch scenes at all.
+    private func readScenes() async {
+        guard let connection else { return }
+        let list = try? await connection.call(
+            "GetSceneList", NoBody(), as: SceneListResponse.self
+        )
+        hud?.setScenes(list?.names ?? [], current: list?.current)
+    }
+
+    /// Switch the program scene. lookit does not touch its own state here: OBS
+    /// answers with CurrentProgramSceneChanged, and `switchScene` releases the
+    /// dirty item on that event exactly as it does for a switch made in OBS.
+    private func pickScene(_ scene: SceneName) {
+        Task { [weak self] in
+            guard let self, let connection else { return }
+            do throws(ObsError) {
+                try await connection.call("SetCurrentProgramScene", SetProgramSceneRequest(scene))
+            } catch {
+                // Scoped through DisconnectReason, which is where a transport
+                // error already knows how to say itself in words the HUD uses.
+                let detail = DisconnectReason(error).message
+                warnings.append(ConfigWarning(key: "scene", detail: detail))
+                FileHandle.standardError.write(
+                    Data("lookit: could not switch scene — \(detail)\n".utf8)
+                )
+                refresh()
+            }
+        }
     }
 
     private func readVersion() async {
@@ -274,7 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onMove: { [weak self] origin in self?.saveHUDPosition(origin) },
             onQuit: { [weak self] in self?.quit() },
             onActivateOBS: { [weak self] in self?.activateOBS() },
-            onPreviewVisible: { [weak self] visible in self?.showPreview(visible) }
+            onPreviewVisible: { [weak self] visible in self?.showPreview(visible) },
+            onPickScene: { [weak self] scene in self?.pickScene(scene) }
         )
         hud.setOBSAvailable(
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: obsBundleIdentifier) != nil

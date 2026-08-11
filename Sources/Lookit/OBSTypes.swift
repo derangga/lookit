@@ -120,6 +120,34 @@ public struct ObsVersion: Decodable, Sendable {
     public let obsVersion: String
 }
 
+/// Every scene OBS knows about, for the HUD's scene picker.
+public struct SceneListResponse: Decodable, Sendable {
+    public let currentProgramSceneName: String?
+    public let scenes: [Scene]
+
+    public struct Scene: Decodable, Sendable {
+        public let sceneName: String
+        public let sceneIndex: Int
+    }
+
+    /// In the order OBS shows them, top first.
+    ///
+    /// Sorted rather than taken as sent: `sceneIndex` counts up from the bottom
+    /// of OBS's list, so index order is the picker upside down and the array's
+    /// own order is not something obs-websocket promises.
+    public var names: [SceneName] {
+        scenes.sorted { $0.sceneIndex > $1.sceneIndex }.map { SceneName($0.sceneName) }
+    }
+
+    public var current: SceneName? { currentProgramSceneName.map(SceneName.init) }
+}
+
+public struct SetProgramSceneRequest: Encodable, Sendable {
+    public let sceneName: String
+
+    public init(_ scene: SceneName) { sceneName = scene.raw }
+}
+
 /// The canvas, used to shape the HUD's preview so what is framed there is what
 /// goes out. `base`, not `output`: the canvas is what scene items are laid out
 /// on, and a downscaled output does not change their proportions.
@@ -236,20 +264,25 @@ public struct SetSceneItemTransformRequest: Encodable, Sendable {
 
 /// The op 5 events lookit acts on.
 ///
-/// One case, because one event is consumed. OBS sends dozens by default and
+/// Two cases, because two events are consumed. OBS sends dozens by default and
 /// the rest are dropped at the boundary rather than modelled here.
 public enum ObsEvent: Equatable, Sendable {
     /// The program scene changed. Invariant 2: the outgoing target must be
     /// released before the new one is acquired.
     case sceneChanged(SceneName)
+    /// A scene was created, removed or reordered, so the HUD's cached list is
+    /// stale. Carries nothing: the list is re-read rather than patched.
+    case sceneListChanged
 }
 
-private struct SceneChangedEvent: Decodable {
+private struct EventFrame: Decodable {
     let eventType: String
-    let eventData: EventData
+    /// Absent on SceneListChanged, which is why this is optional rather than
+    /// two separate decodes of the same frame.
+    let eventData: EventData?
 
     struct EventData: Decodable {
-        let sceneName: String
+        let sceneName: String?
     }
 }
 
@@ -260,12 +293,20 @@ private struct SceneChangedEvent: Decodable {
 public func obsEvent(in data: Data) -> ObsEvent? {
     guard
         (try? JSONDecoder().decode(OpCode.self, from: data))?.op == 5,
-        let event = try? JSONDecoder().decode(Payload<SceneChangedEvent>.self, from: data).d,
-        // Other events carry a sceneName too — SceneItemCreated among them —
-        // so the decode succeeding is not enough to identify this one.
-        event.eventType == "CurrentProgramSceneChanged"
+        let event = try? JSONDecoder().decode(Payload<EventFrame>.self, from: data).d
     else { return nil }
-    return .sceneChanged(SceneName(event.eventData.sceneName))
+
+    // Switched on eventType, never on shape: other events carry a sceneName too
+    // — SceneItemCreated among them — so a successful decode identifies nothing.
+    switch event.eventType {
+    case "CurrentProgramSceneChanged":
+        guard let name = event.eventData?.sceneName else { return nil }
+        return .sceneChanged(SceneName(name))
+    case "SceneListChanged":
+        return .sceneListChanged
+    default:
+        return nil
+    }
 }
 
 // MARK: - What is being captured

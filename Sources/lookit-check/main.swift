@@ -1000,6 +1000,33 @@ do {
     )
     expect(obsEvent(in: itemCreated) == nil, "another event that names a scene is still not a switch")
 
+    // No eventData at all, which is what made the frame optional. Read as an
+    // event rather than dropped, or the HUD's scene list would go stale.
+    let listChanged = json(
+        """
+        {"op":5,"d":{"eventType":"SceneListChanged","eventIntent":4,
+        "eventData":{"scenes":[{"sceneName":"Demo","sceneIndex":0}]}}}
+        """
+    )
+    expect(obsEvent(in: listChanged) == .sceneListChanged, "a scene list change is read")
+
+    // sceneIndex counts up from the bottom of OBS's list, so the picker has to
+    // sort descending to read the way the scene list does.
+    let sceneList = try! JSONDecoder().decode(
+        SceneListResponse.self,
+        from: json(
+            """
+            {"currentProgramSceneName":"Demo",
+            "scenes":[{"sceneName":"Idle","sceneIndex":0},{"sceneName":"Demo","sceneIndex":1}]}
+            """
+        )
+    )
+    expect(
+        sceneList.names == [SceneName("Demo"), SceneName("Idle")],
+        "scenes are offered top-down, the way OBS lists them"
+    )
+    expect(sceneList.current == SceneName("Demo"), "and the live one is known")
+
     // 600 = ResourceNotFound, what asking for a missing scene item returns.
     let failed = json(
         """

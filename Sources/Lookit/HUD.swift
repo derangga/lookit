@@ -11,8 +11,9 @@ import LookitCore
 public final class HUD {
     private let panel: NSPanel
     private let statusLabel = NSTextField(labelWithString: "")
-    /// Held rather than built inline so it can be greyed when OBS is absent.
-    private lazy var obsButton = plainButton("video.fill", "Open OBS", #selector(obsTapped))
+    /// Held rather than built inline so it can be greyed when OBS is absent,
+    /// and so its tooltip can follow the program scene.
+    private lazy var sceneButton = buildSceneButton()
     /// Held so its symbol can follow the state, and so it can carry the status
     /// text that has nowhere to go while the preview is collapsed.
     private lazy var previewButton = plainButton(
@@ -45,8 +46,13 @@ public final class HUD {
     private let onActivateOBS: () -> Void
     /// So the frame feed can stop while there is nothing to show it in.
     private let onPreviewVisible: (Bool) -> Void
+    private let onPickScene: (SceneName) -> Void
 
     private var stops: [Double] = Config.fallback.stops
+    /// Cached, because `NSMenu.popUp` is synchronous and cannot wait on OBS.
+    /// Kept fresh by the app from GetSceneList; empty means not connected.
+    private var scenes: [SceneName] = []
+    private var currentScene: SceneName?
     /// Kept so the controls can be greyed out when there is nothing to zoom.
     private var buttons: [NSButton] = []
 
@@ -57,7 +63,8 @@ public final class HUD {
         onMove: @escaping (CGPoint) -> Void,
         onQuit: @escaping () -> Void,
         onActivateOBS: @escaping () -> Void,
-        onPreviewVisible: @escaping (Bool) -> Void
+        onPreviewVisible: @escaping (Bool) -> Void,
+        onPickScene: @escaping (SceneName) -> Void
     ) {
         self.perform = perform
         self.jump = jump
@@ -65,6 +72,7 @@ public final class HUD {
         self.onQuit = onQuit
         self.onActivateOBS = onActivateOBS
         self.onPreviewVisible = onPreviewVisible
+        self.onPickScene = onPickScene
 
         panel = NSPanel(
             // Provisional: buildContent sizes the panel to its content, and
@@ -143,7 +151,7 @@ public final class HUD {
             plainButton("xmark", "Quit lookit", #selector(quitTapped)),
             previewButton,
             gap,
-            obsButton,
+            sceneButton,
             button("arrow.counterclockwise", .reset),
             zoomButton,
         ])
@@ -251,6 +259,29 @@ public final class HUD {
         button.target = self
         button.action = action
         style(button)
+        return button
+    }
+
+    /// The scene chip: opens the program scenes, and OBS itself at the bottom.
+    ///
+    /// Icon only, deliberately. A chip wide enough for "Browser Demo" would eat
+    /// the row, and one sized to the name would resize on every scene change —
+    /// the same reason `zoomWidth` is a constant. The name is in the tooltip and
+    /// checked in the menu, neither of which moves anything.
+    ///
+    /// The chevron is a glyph in the title rather than a second image, since a
+    /// button has room for one image and the icon is the one worth having.
+    private func buildSceneButton() -> NSButton {
+        let button = Chip()
+        button.image = NSImage(systemSymbolName: "video.fill", accessibilityDescription: "Scene")
+        button.title = "▾"
+        button.imagePosition = .imageLeft
+        button.imageHugsTitle = true
+        button.font = .systemFont(ofSize: 9, weight: .bold)
+        button.toolTip = "Scene"
+        button.target = self
+        button.action = #selector(sceneTapped)
+        style(button, width: HUD.sceneWidth)
         return button
     }
 
@@ -362,22 +393,72 @@ public final class HUD {
             menu.addItem(item)
         }
 
-        // Anchored in screen coordinates, from the chip's rect rather than a
-        // point inside it. A point in the chip's own space is ambiguous — the
-        // space turned out to be flipped, so `y: -4` put the menu's top edge
-        // *above* the chip, covering the number you opened it to change. A
-        // converted rect is flip-agnostic, and `minY` in screen space is the
-        // bottom whatever the view underneath believes.
-        guard let window = zoomButton.window else { return }
-        let onScreen = window.convertToScreen(zoomButton.convert(zoomButton.bounds, to: nil))
+        popUp(menu, under: zoomButton)
+    }
+
+    /// Offer the program scenes, marking the live one, with OBS itself last.
+    ///
+    /// Built on each click from the cached list, for the same reason the stops
+    /// menu is: OBS's scenes change while lookit is running, and a menu built
+    /// once would go stale. The cache exists because `popUp` is synchronous —
+    /// there is no point in the click where a round trip could be awaited.
+    @objc private func sceneTapped() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        if !scenes.isEmpty {
+            let header = NSMenuItem(title: "Scene", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+
+            for scene in scenes {
+                let item = NSMenuItem(
+                    title: scene.raw, action: #selector(scenePicked(_:)), keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = scene.raw
+                item.state = scene == currentScene ? .on : .off
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+
+        // Kept, and kept reachable when the list is empty: with OBS not running
+        // there are no scenes to offer and opening it is the only useful thing
+        // this chip can still do.
+        let open = NSMenuItem(title: "Open OBS", action: #selector(obsTapped), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+
+        popUp(menu, under: sceneButton)
+    }
+
+    /// Anchored in screen coordinates, from the chip's rect rather than a point
+    /// inside it. A point in the chip's own space is ambiguous — the space
+    /// turned out to be flipped, so `y: -4` put the menu's top edge *above* the
+    /// chip, covering the number you opened it to change. A converted rect is
+    /// flip-agnostic, and `minY` in screen space is the bottom whatever the view
+    /// underneath believes.
+    private func popUp(_ menu: NSMenu, under button: NSButton) {
+        guard let window = button.window else { return }
+        let onScreen = window.convertToScreen(button.convert(button.bounds, to: nil))
         menu.popUp(
             positioning: nil, at: NSPoint(x: onScreen.minX, y: onScreen.minY - 4), in: nil
         )
     }
 
-    /// Grey the OBS button when OBS is not installed, since nothing would open.
+    /// Grey the scene chip when OBS is not installed: there are no scenes to
+    /// switch to and nothing to open.
     public func setOBSAvailable(_ available: Bool) {
-        obsButton.isEnabled = available
+        sceneButton.isEnabled = available
+    }
+
+    /// The scenes to offer, and which one is live. Empty while disconnected,
+    /// which leaves the chip offering only "Open OBS".
+    public func setScenes(_ scenes: [SceneName], current: SceneName?) {
+        self.scenes = scenes
+        currentScene = current
+        sceneButton.toolTip = current.map { "Scene: \($0.raw)" } ?? "Scene"
     }
 
     private func button(_ symbol: String, _ action: HotkeyAction) -> NSButton {
@@ -395,6 +476,11 @@ public final class HUD {
     @objc private func tapped(_ sender: NSButton) {
         guard HotkeyAction.allCases.indices.contains(sender.tag) else { return }
         perform(HotkeyAction.allCases[sender.tag])
+    }
+
+    @objc private func scenePicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        onPickScene(SceneName(raw))
     }
 
     @objc private func stopPicked(_ sender: NSMenuItem) {
@@ -513,6 +599,8 @@ public final class HUD {
     /// Every chip's height, and the square chips' width. Sized to be hit
     /// without looking, mid-demo, on a panel that must not be aimed at.
     static let controlSide: CGFloat = 32
+    /// The scene chip: a square plus room for its chevron.
+    static let sceneWidth: CGFloat = 46
     /// The zoom chip: a square plus room for "1.5x" and its chevron.
     ///
     /// Fixed rather than fitted. Sizing to the label would shrink the chip on
