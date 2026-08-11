@@ -57,6 +57,7 @@ main
     → readJournal                    // boundary
     → obs.setSceneItemTransform      // pristine
     → deleteJournal
+  → readScenes                       // the HUD's picker; cached, see §3
   → resolveTarget
     → obs.getCurrentProgramScene
     → obs.getSceneItemList
@@ -100,8 +101,29 @@ onHotkey(zoomIn)
 obs.events ▸ CurrentProgramSceneChanged
   → restoreTarget                    // release dirty
   → deleteJournal
+  → readScenes                       // only to move the checkmark
   → resolveTarget
   → setZoom(1.0)
+```
+
+**HUD scene pick:**
+
+```ts
+hud ▸ scenePicked
+  → obs.setCurrentProgramScene
+  → ⟨nothing local⟩                  // OBS answers with the event above
+```
+
+Deliberately half a graph. The switch is not applied here and no state is
+touched; OBS announces it back and the scene-switch graph runs unchanged, so
+invariant 2 has one implementation rather than one per way of switching.
+
+**HUD collapse:**
+
+```ts
+hud ▸ previewToggled
+  → hud.setPreviewVisible            // layout only
+  → previewFeed.stop / bump+start
 ```
 
 Most of the tick loop is pure. That is not aesthetic — it is what makes [ADR 0001](./docs/adr/0001-drive-obs-via-websocket.md)'s escape hatch real.
@@ -110,11 +132,19 @@ Most of the tick loop is pure. That is not aesthetic — it is what makes [ADR 0
 
 ```
 Stream:  obs.events · tick(30Hz) · hotkeys · configFileChanges
+         previewFeed(2Hz, 8Hz for 1s after a reframe) — stopped while collapsed
 Effect:  connect · each request · locateWindow · journal read/write
 Bounded: CaptureRect valid 1 tick · sceneItemList valid until scene change
+         sceneList valid until SceneListChanged
 ```
 
 30Hz because the canvas is 30fps. 60 would be double the traffic for no visible gain.
+
+The scene list is **cached**, not read on demand, because the picker is an
+`NSMenu` and `popUp` is synchronous — there is no point in the click where a
+round trip could be awaited. That makes the cache's staleness an invariant to
+maintain rather than a convenience: it is re-read on identify, on
+`SceneListChanged`, and on every scene switch.
 
 ## §4 E — where it breaks
 
@@ -141,6 +171,13 @@ main
 onHotkey
   → ensureJournalled
     ⚠ writeFailed → escape: REFUSE TO ZOOM
+hud ▸ scenePicked
+  → obs.setCurrentProgramScene
+    ⚠ requestFailed → escape: HUD warns, the scene simply does not change
+readScenes
+  ⚠ dropped → escape: empty list — the chip offers only "Open OBS"
+previewFeed
+  ⚠ any → escape: dim the last frame after two failures      // decoration
 ```
 
 **No journal, no zoom.** Going dirty without a durable pristine record is the only thing that can damage the user's OBS layout, so it is a precondition, not best-effort.
@@ -172,11 +209,16 @@ Swift has no R channel and cannot prove R is discharged the way Effect can. The 
 ## §6 Boundary — `unknown → trusted`
 
 ```
-obs-websocket JSON  → Transform, SceneItemList, InputSettings
+obs-websocket JSON  → Transform, SceneItemList, InputSettings, SceneList
+obs op 5 frame      → ObsEvent = sceneChanged | sceneListChanged
+screenshot data URI → Data                     // strict prefix, then base64
 config.json         → Config
 restore.json        → Pristine
 CGWindowList dict   → CaptureRect
 ```
+
+`ObsEvent` switches on `eventType`, never on shape: a dozen other events carry
+a `sceneName`, so a successful decode identifies nothing.
 
 Cursor coordinates come from the OS — trusted, no parse. Parse once at the edge; everything inside trusts the types.
 
