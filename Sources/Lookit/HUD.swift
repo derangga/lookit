@@ -152,7 +152,19 @@ public final class HUD {
         controls.alignment = .centerY
 
         let preview = buildPreview()
-        let stack = NSStackView(views: [preview, controls])
+        // Gravity areas rather than a plain list of views, and only because of
+        // the collapse. A vertical stack puts everything in `.top`, so the
+        // moment the preview hides the row has slack above it and jumps to the
+        // top of a panel that has not shrunk yet — then rides the top edge back
+        // down as it does. Anchoring the row to the bottom means the one edge
+        // it sits on is the one edge the resize never moves, so it does not
+        // move either.
+        let stack = NSStackView()
+        // Before the views go in: a gravity area means top or bottom only once
+        // the stack knows which way it runs.
+        stack.orientation = .vertical
+        stack.addView(preview, in: .top)
+        stack.addView(controls, in: .bottom)
         // Without this the row shrinks to its content and centres, and the gap
         // has no slack to push quit away from the cluster.
         //
@@ -160,7 +172,6 @@ public final class HUD {
         // panel one width in both states: the hidden box is out of the stack's
         // layout but still 280 wide, so the row it is pinned to does not move.
         controls.widthAnchor.constraint(equalTo: preview.widthAnchor).isActive = true
-        stack.orientation = .vertical
         stack.spacing = 4
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
