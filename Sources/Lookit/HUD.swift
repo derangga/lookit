@@ -28,10 +28,6 @@ public final class HUD {
     private let previewView = NSImageView()
     /// Swapped whenever the canvas shape changes, so the box always matches it.
     private var previewAspect: NSLayoutConstraint?
-    /// What ties the row's width to the preview's. Released while collapsed —
-    /// hiding the box is not enough on its own, since this constraint would go
-    /// on holding the row at the preview's width with no preview there.
-    private var rowMatchesPreview: NSLayoutConstraint?
     private var previewVisible = true
     /// Kept so it can be shown again when the preview comes back, and so the
     /// collapsed chip can carry it as a tooltip meanwhile.
@@ -142,10 +138,6 @@ public final class HUD {
         // pressed mid-demo.
         let gap = NSView()
         gap.setContentHuggingPriority(.init(1), for: .horizontal)
-        // Collapsed there is no preview width to spend, so the gap would close
-        // and put quit against the cluster. A floor keeps the separation the
-        // slack used to provide; expanded it is never the binding constraint.
-        gap.widthAnchor.constraint(greaterThanOrEqualToConstant: 24).isActive = true
 
         let controls = NSStackView(views: [
             plainButton("xmark", "Quit lookit", #selector(quitTapped)),
@@ -163,8 +155,11 @@ public final class HUD {
         let stack = NSStackView(views: [preview, controls])
         // Without this the row shrinks to its content and centres, and the gap
         // has no slack to push quit away from the cluster.
-        rowMatchesPreview = controls.widthAnchor.constraint(equalTo: preview.widthAnchor)
-        rowMatchesPreview?.isActive = true
+        //
+        // Left active while the preview is collapsed, which is what keeps the
+        // panel one width in both states: the hidden box is out of the stack's
+        // layout but still 280 wide, so the row it is pinned to does not move.
+        controls.widthAnchor.constraint(equalTo: preview.widthAnchor).isActive = true
         stack.orientation = .vertical
         stack.spacing = 4
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 10)
@@ -357,7 +352,6 @@ public final class HUD {
     private func setPreviewVisible(_ visible: Bool) {
         previewVisible = visible
         previewBox.isHidden = !visible
-        rowMatchesPreview?.isActive = visible
         let help = visible ? "Hide preview" : "Show preview"
         previewButton.image = NSImage(
             systemSymbolName: visible ? "eye" : "eye.slash", accessibilityDescription: help
