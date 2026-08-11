@@ -358,7 +358,7 @@ public final class HUD {
         )
         previewButton.toolTip = help
         applyStatus()
-        resizeToFit()
+        resizeToFit(animated: true)
         onPreviewVisible(visible)
     }
 
@@ -579,12 +579,26 @@ public final class HUD {
 
     /// Size the panel to its content, keeping the bottom-left origin so it does
     /// not appear to jump.
-    private func resizeToFit() {
+    ///
+    /// Animated only for the collapse, which is a thing the user did and should
+    /// see happen. The canvas-aspect resize is not: it arrives on its own a
+    /// moment after launch, and a panel that reshapes itself unasked reads as a
+    /// glitch rather than as feedback.
+    private func resizeToFit(animated: Bool = false) {
         guard let content = panel.contentView else { return }
         content.layoutSubtreeIfNeeded()
         let size = content.fittingSize
         guard size.width > 0, size.height > 0, panel.frame.size != size else { return }
-        panel.setFrame(NSRect(origin: panel.frame.origin, size: size), display: true)
+        let frame = NSRect(origin: panel.frame.origin, size: size)
+
+        guard animated else { return panel.setFrame(frame, display: true) }
+        NSAnimationContext.runAnimationGroup { context in
+            // Short enough to stay ahead of a second click, which is the only
+            // way to interrupt it.
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 
     /// Wide enough for four bezelled controls without squeezing the preview,
