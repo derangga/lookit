@@ -233,7 +233,7 @@ public struct SceneItemRequest: Encodable, Sendable {
 /// verified against 32.1.1 — with one exception, the bounds, handled below.
 /// Fields lookit does not carry, such as `cropToBounds`, are left untouched
 /// because OBS merges rather than replaces.
-public struct SetSceneItemTransformRequest: Encodable, Sendable {
+public struct SetSceneItemTransformRequest: Encodable, Equatable, Sendable {
     public let sceneName: String
     public let sceneItemId: Int
     public let sceneItemTransform: Transform

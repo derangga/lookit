@@ -227,11 +227,19 @@ Cursor coordinates come from the OS — trusted, no parse. Parse once at the edg
 ```
 reconnect + backoff  ⟳ every obs.*
 coalesce             ⟳ setSceneItemTransform   // drop stale frame if one is in flight
+dedupe               ⟳ setSceneItemTransform   // drop a frame OBS already has
 lastGood             ⟳ loadConfig
 log                  ⟳ all
 ```
 
 Frame coalescing keeps the 30Hz loop from queueing behind a slow round-trip.
+Dedupe is the other half: crops are whole pixels, so a still cursor and a
+**Frozen** shot both produce the identical request every tick, and OBS already
+has it. Both live in `TransformSender` because neither changes the graph — the
+tick loop still says "put the item here" 30 times a second. The dedupe assumes
+this sender is the only writer of that transform, which is why releasing the
+dirty scope has to `reset()` it: `restoreJournalIfPresent` writes the pristine
+straight past it.
 
 ## §8 Scope
 

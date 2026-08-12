@@ -1249,6 +1249,47 @@ do {
     expect(sender.lastFailure == nil, "and cleared by the next frame that lands")
 }
 
+do {
+    var sent: [Double] = []
+    let sender = TransformSender { request throws(ObsError) in
+        sent.append(request.sceneItemTransform.cropLeft)
+    }
+
+    sender.post(frame(1))
+    await settle { sender.isIdle }
+    sender.post(frame(1))
+    sender.post(frame(1))
+    await settle { sender.isIdle }
+    expect(sent == [1], "a frame identical to the one OBS already has is dropped")
+
+    sender.post(frame(2))
+    await settle { sender.isIdle }
+    expect(sent == [1, 2], "a frame that actually differs still goes")
+
+    // DirtyScope restores the pristine without passing through here, so after a
+    // release the sender's idea of what OBS holds is a lie.
+    sender.reset()
+    sender.post(frame(2))
+    await settle { sender.isIdle }
+    expect(sent == [1, 2, 2], "and reset makes the repeat land again")
+}
+
+do {
+    var fail = true
+    var attempts = 0
+    let sender = TransformSender { _ throws(ObsError) in
+        attempts += 1
+        if fail { throw .requestFailed(code: 600, comment: "gone") }
+    }
+
+    sender.post(frame(9))
+    await settle { sender.isIdle }
+    fail = false
+    sender.post(frame(9))
+    await settle { sender.isIdle }
+    expect(attempts == 2, "a refused frame is resent even though it is identical")
+}
+
 // MARK: - What the HUD says
 
 print("hudStatus")

@@ -502,6 +502,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func releaseScope() async {
         guard let scope else { return }
+        // Before the restore, not after: `release` writes the pristine without
+        // going through the sender, so whatever the sender thinks OBS is
+        // holding is about to stop being true either way — including when the
+        // restore fails partway.
+        sender?.reset()
         do {
             try await scope.release()
         } catch {
