@@ -50,6 +50,7 @@ On the first run lookit writes a complete settings file to `~/.config/lookit/con
     "zoomOut": "cmd+opt+-"
   },
   "obs": { "host": "127.0.0.1", "password": "", "port": 4455 },
+  "panRate": 12.0,
   "stops": [1.0, 1.5, 2.0, 3.0]
 }
 ```
@@ -59,6 +60,7 @@ What each setting means:
 - **`stops`** is the list of zoom levels the hotkeys move between. The first entry is the resting level and must be 1.0 in practice, since that is the whole capture. Values below 1.0 are dropped and the list is sorted for you.
 - **`easeMs`** is how long a zoom change takes to complete, in milliseconds. It is clamped to the range 1 to 5000.
 - **`deadZone`** is how much of the frame the cursor may wander inside before the shot starts to follow, as a fraction between 0 and 1. At 0 the shot tracks your pointer exactly and feels twitchy. At 1 the shot only moves when the cursor would otherwise leave the frame completely. The default of 0.6 is a middle ground that follows you without drifting during ordinary typing.
+- **`panRate`** is how quickly the shot closes the gap once the cursor has left the dead zone, in "fraction of the remaining distance per second" terms. It is what stops the frame being welded to your pointer: at the default of 12 a flick of the mouse is followed by a camera move that catches up over about a fifth of a second, rather than the whole frame snapping sideways with your hand. Lower is heavier and more cinematic, higher is more immediate, and 0 turns the smoothing off entirely so the shot tracks in lock step. Clamped to the range 0 to 60, and the speed does not change with your canvas frame rate.
 - **`keys`** are the three global hotkeys, written as a combination of modifiers and a key joined with plus signs. The defaults are the same combinations macOS uses for its own accessibility zoom, so if you have that feature turned on you will need to change these or turn that feature off.
 - **`obs`** is where to find OBS. Set `password` to whatever the WebSocket Server Settings dialog shows if authentication is required. Fixing a wrong password here and saving the file is enough to reconnect, no restart needed.
 - **`hud`** is where the floating panel sits on screen. You do not edit this by hand, lookit writes it when you drag the panel so that it comes back in the same place next time.

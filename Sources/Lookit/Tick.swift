@@ -25,7 +25,9 @@ public func framing(
     source: SourceSize,
     zoom: Double,
     center: SourcePoint,
-    deadZone: Double
+    deadZone: Double,
+    panRate: Double,
+    dt: Double
 ) -> Framing {
     guard let inSource = mapCursorToSource(cursor: cursor, rect: rect) else {
         return Framing(
@@ -36,7 +38,8 @@ public func framing(
     }
 
     let next = nextPanCenter(
-        cursor: inSource, current: center, source: source, zoom: zoom, deadZone: deadZone
+        cursor: inSource, current: center, source: source, zoom: zoom,
+        deadZone: deadZone, rate: panRate, dt: dt
     )
     return Framing(
         center: next,

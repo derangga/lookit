@@ -100,7 +100,7 @@ do {
     let center = SourcePoint(x: 500, y: 500)
     let held = nextPanCenter(
         cursor: SourcePoint(x: 600, y: 500), current: center,
-        source: square, zoom: 2.0, deadZone: 0.6
+        source: square, zoom: 2.0, deadZone: 0.6, rate: 0, dt: 0
     )
     expect(held.x, 500, "cursor inside the dead zone does not pan")
 }
@@ -108,7 +108,7 @@ do {
 do {
     let moved = nextPanCenter(
         cursor: SourcePoint(x: 700, y: 500), current: SourcePoint(x: 500, y: 500),
-        source: square, zoom: 2.0, deadZone: 0.6
+        source: square, zoom: 2.0, deadZone: 0.6, rate: 0, dt: 0
     )
     expect(moved.x, 550, "cursor past the dead zone pans by the minimum")
 }
@@ -116,7 +116,7 @@ do {
 do {
     let clamped = nextPanCenter(
         cursor: SourcePoint(x: 990, y: 500), current: SourcePoint(x: 500, y: 500),
-        source: square, zoom: 2.0, deadZone: 0.6
+        source: square, zoom: 2.0, deadZone: 0.6, rate: 0, dt: 0
     )
     expect(clamped.x, 750, "panning stops at the source edge instead of overshooting")
 }
@@ -124,7 +124,7 @@ do {
 do {
     let always = nextPanCenter(
         cursor: SourcePoint(x: 510, y: 500), current: SourcePoint(x: 500, y: 500),
-        source: square, zoom: 2.0, deadZone: 0.0
+        source: square, zoom: 2.0, deadZone: 0.0, rate: 0, dt: 0
     )
     expect(always.x, 510, "deadZone 0 tracks the cursor exactly")
 
@@ -133,13 +133,13 @@ do {
     // leave the frame.
     let roaming = nextPanCenter(
         cursor: SourcePoint(x: 700, y: 500), current: SourcePoint(x: 500, y: 500),
-        source: square, zoom: 2.0, deadZone: 1.0
+        source: square, zoom: 2.0, deadZone: 1.0, rate: 0, dt: 0
     )
     expect(roaming.x, 500, "deadZone 1 holds while the cursor is anywhere in frame")
 
     let escaping = nextPanCenter(
         cursor: SourcePoint(x: 900, y: 500), current: SourcePoint(x: 500, y: 500),
-        source: square, zoom: 2.0, deadZone: 1.0
+        source: square, zoom: 2.0, deadZone: 1.0, rate: 0, dt: 0
     )
     expect(escaping.x, 650, "deadZone 1 still pans to keep the cursor from leaving frame")
 }
@@ -148,9 +148,68 @@ do {
     // Hysteresis: having panned, coming back a little must not pan back.
     let after = nextPanCenter(
         cursor: SourcePoint(x: 690, y: 500), current: SourcePoint(x: 550, y: 500),
-        source: square, zoom: 2.0, deadZone: 0.6
+        source: square, zoom: 2.0, deadZone: 0.6, rate: 0, dt: 0
     )
     expect(after.x, 550, "small reverse movement inside the dead zone holds")
+}
+
+// MARK: - Pan smoothing
+
+print("chaseFraction")
+
+do {
+    // The cursor sits at 700 with 150 slack, so the dead zone wants the centre
+    // at 550 and keeps wanting it — the target does not move as the shot
+    // approaches, which is what makes the chase a clean exponential.
+    let goal = 550.0
+    var center = SourcePoint(x: 500, y: 500)
+    var previous = center.x
+    var monotone = true
+    var overshot = false
+
+    for _ in 0..<60 {
+        center = nextPanCenter(
+            cursor: SourcePoint(x: 700, y: 500), current: center,
+            source: square, zoom: 2.0, deadZone: 0.6, rate: 12, dt: 1.0 / 30
+        )
+        if center.x < previous - 0.0001 { monotone = false }
+        if center.x > goal + 0.0001 { overshot = true }
+        previous = center.x
+    }
+
+    expect(monotone, "the chase closes on the target without backing up")
+    expect(!overshot, "and never overshoots it — an exponential cannot")
+    expect(center.x, goal, "two seconds is long enough to arrive", tolerance: 0.01)
+}
+
+do {
+    // The property the exponential exists for. `current += remaining * 0.2`
+    // would land at 500 + 50*(1-0.8^30) = ~549.9 at 30Hz but ~550.0 at 60Hz
+    // after twice as many steps — the pan would simply be faster on a 60fps
+    // canvas. This must not care.
+    func chase(steps: Int, dt: Double) -> Double {
+        var c = SourcePoint(x: 500, y: 500)
+        for _ in 0..<steps {
+            c = nextPanCenter(
+                cursor: SourcePoint(x: 700, y: 500), current: c,
+                source: square, zoom: 2.0, deadZone: 0.6, rate: 12, dt: dt
+            )
+        }
+        return c.x
+    }
+
+    expect(
+        chase(steps: 15, dt: 1.0 / 30), chase(steps: 30, dt: 1.0 / 60),
+        "half a second of chase lands in the same place at 30Hz and at 60Hz",
+        tolerance: 0.01
+    )
+
+    expect(
+        chase(steps: 1, dt: 1.0 / 30) < 550,
+        "one tick covers part of the distance, not all of it"
+    )
+    expect(chaseFraction(rate: 0, dt: 1.0 / 30), 1, "rate 0 means no smoothing at all")
+    expect(chaseFraction(rate: 12, dt: 0), 1, "and a zero dt cannot be integrated, so it lands")
 }
 
 // MARK: - Cursor mapping
@@ -1549,14 +1608,14 @@ do {
     // cursor moves. This is what makes "at rest" cost nothing.
     let atRest = framing(
         cursor: ScreenPoint(x: 150, y: 100), rect: rect, source: source,
-        zoom: 1, center: middle, deadZone: 0.6
+        zoom: 1, center: middle, deadZone: 0.6, panRate: 0, dt: 0
     )
     expect(atRest.crop == .zero, "1x crops nothing")
 
     // Cursor outside the captured window: hold, do not snap.
     let outside = framing(
         cursor: ScreenPoint(x: 5, y: 5), rect: rect, source: source,
-        zoom: 2, center: middle, deadZone: 0.6
+        zoom: 2, center: middle, deadZone: 0.6, panRate: 0, dt: 0
     )
     expect(outside.pan == .frozen, "a cursor off the window freezes the shot")
     expect(outside.center == middle, "and the centre does not move")
@@ -1564,7 +1623,7 @@ do {
     // Inside, but within the dead zone: also holds, for a different reason.
     let inDeadZone = framing(
         cursor: ScreenPoint(x: 100 + 748, y: 60 + 464), rect: rect, source: source,
-        zoom: 2, center: middle, deadZone: 0.6
+        zoom: 2, center: middle, deadZone: 0.6, panRate: 0, dt: 0
     )
     expect(inDeadZone.pan == .following, "a cursor on the window is followed")
     expect(inDeadZone.center == middle, "but the dead zone means it does not drift")
@@ -1572,7 +1631,7 @@ do {
     // Cursor pushed to the far corner: the shot moves, and stays inside.
     let corner = framing(
         cursor: ScreenPoint(x: 100 + 1490, y: 60 + 925), rect: rect, source: source,
-        zoom: 2, center: middle, deadZone: 0.6
+        zoom: 2, center: middle, deadZone: 0.6, panRate: 0, dt: 0
     )
     expect(corner.center.x > middle.x && corner.center.y > middle.y, "the shot follows")
     let region = visibleRegion(source: source, zoom: 2, center: corner.center)
@@ -1668,7 +1727,7 @@ do {
         inputName: InputName("chrome"), transform: sampleTransform
     )
     let loop = TickLoop(
-        environment: rig.environment, deadZone: 0.6, easeMs: 300, resting: 1
+        environment: rig.environment, deadZone: 0.6, panRate: 0, easeMs: 300, resting: 1
     )
 
     // Zoom in to 2x. The ease is 300ms, so ~9 frames at 30Hz.

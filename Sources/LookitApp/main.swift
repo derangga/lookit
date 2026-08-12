@@ -445,6 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 send: { [weak self] request in self?.sender?.post(request) }
             ),
             deadZone: config.deadZone,
+            panRate: config.panRate,
             easeMs: config.easeMs,
             resting: config.stops.first ?? 1.0
         )

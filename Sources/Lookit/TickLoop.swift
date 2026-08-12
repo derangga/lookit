@@ -50,6 +50,7 @@ public final class TickLoop {
 
     private let environment: Environment
     private let deadZone: Double
+    private let panRate: Double
     private let easeSeconds: Double
     private let resting: Double
 
@@ -57,14 +58,18 @@ public final class TickLoop {
     private var from = 1.0
     private var to = 1.0
     private var startedAt = 0.0
+    /// When `step` last ran, so the pan can be advanced by real elapsed time
+    /// rather than by an assumed 30Hz.
+    private var lastStepAt: Double?
 
     public private(set) var zoom = 1.0
 
     public init(
-        environment: Environment, deadZone: Double, easeMs: Int, resting: Double
+        environment: Environment, deadZone: Double, panRate: Double, easeMs: Int, resting: Double
     ) {
         self.environment = environment
         self.deadZone = deadZone
+        self.panRate = panRate
         easeSeconds = Double(max(easeMs, 0)) / 1000
         self.resting = resting
         zoom = resting
@@ -94,6 +99,7 @@ public final class TickLoop {
 
     public func stopHolding() {
         held = nil
+        lastStepAt = nil
         zoom = resting
         from = resting
         to = resting
@@ -103,8 +109,18 @@ public final class TickLoop {
     public func step() -> Outcome {
         guard let held, let source = held.pristine.transform.sourceSize else { return .idle }
 
-        let progress = easeSeconds <= 0 ? 1 : (environment.now() - startedAt) / easeSeconds
+        let now = environment.now()
+        let progress = easeSeconds <= 0 ? 1 : (now - startedAt) / easeSeconds
         zoom = eased(from: from, to: to, progress: progress)
+
+        // Clamped the way zoominator clamps its frame delta: only to survive a
+        // stalled tick, not to impose a rate of our own. Unclamped, a machine
+        // that froze for a second would hand the pan a dt large enough to close
+        // the whole distance in one frame — exactly the snap the chase exists
+        // to avoid. The first step has no predecessor, so it assumes the 30Hz
+        // the caller is aiming for.
+        let dt = min(max(now - (lastStepAt ?? now - 1.0 / 30), 1.0 / 480), 1.0 / 20)
+        lastStepAt = now
 
         // Re-read every tick: the window moves, and one that has gone — or
         // whose id was recycled to another app — must stop the zoom rather than
@@ -113,7 +129,8 @@ public final class TickLoop {
 
         let framed = framing(
             cursor: environment.cursor(), rect: rect, source: source,
-            zoom: zoom, center: held.center, deadZone: deadZone
+            zoom: zoom, center: held.center, deadZone: deadZone,
+            panRate: panRate, dt: dt
         )
         self.held?.center = framed.center
 

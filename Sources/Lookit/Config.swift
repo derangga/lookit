@@ -10,16 +10,18 @@ public struct Config: Equatable, Sendable {
     public var stops: [Double]
     public var easeMs: Int
     public var deadZone: Double
+    /// How eagerly the shot closes on the cursor, per second. See `nextPanCenter`.
+    public var panRate: Double
     public var keys: Keys
     public var obs: OBS
     public var hud: HUD
 
     public init(
-        stops: [Double], easeMs: Int, deadZone: Double,
+        stops: [Double], easeMs: Int, deadZone: Double, panRate: Double,
         keys: Keys, obs: OBS, hud: HUD
     ) {
         self.stops = stops; self.easeMs = easeMs; self.deadZone = deadZone
-        self.keys = keys; self.obs = obs; self.hud = hud
+        self.panRate = panRate; self.keys = keys; self.obs = obs; self.hud = hud
     }
 
     public struct Keys: Equatable, Sendable {
@@ -56,6 +58,9 @@ public struct Config: Equatable, Sendable {
         stops: [1.0, 1.5, 2.0, 3.0],
         easeMs: 350,
         deadZone: 0.6,
+        // ~35% of the remaining distance per 33ms tick: enough lag to read as a
+        // camera move, not so much that the cursor outruns the frame.
+        panRate: 12.0,
         keys: Keys(zoomIn: "cmd+opt+=", zoomOut: "cmd+opt+-", reset: "cmd+opt+0"),
         obs: OBS(host: "127.0.0.1", port: 4455, password: ""),
         hud: HUD(x: nil, y: nil)
@@ -74,6 +79,7 @@ extension Config: Codable {
         stops = try c.decodeIfPresent([Double].self, forKey: .stops) ?? d.stops
         easeMs = try c.decodeIfPresent(Int.self, forKey: .easeMs) ?? d.easeMs
         deadZone = try c.decodeIfPresent(Double.self, forKey: .deadZone) ?? d.deadZone
+        panRate = try c.decodeIfPresent(Double.self, forKey: .panRate) ?? d.panRate
         keys = try c.decodeIfPresent(Keys.self, forKey: .keys) ?? d.keys
         obs = try c.decodeIfPresent(OBS.self, forKey: .obs) ?? d.obs
         hud = try c.decodeIfPresent(HUD.self, forKey: .hud) ?? d.hud
@@ -162,6 +168,13 @@ public func validated(_ config: Config) -> (Config, [ConfigWarning]) {
     if !(0...1).contains(config.deadZone) || !config.deadZone.isFinite {
         out.deadZone = config.deadZone.isFinite ? min(max(config.deadZone, 0), 1) : Config.fallback.deadZone
         warnings.append(ConfigWarning(key: "deadZone", detail: "clamped to 0...1"))
+    }
+
+    // 0 is meaningful — it turns the chase off and pans in lock-step, which is
+    // what every version before this one did — so the floor is 0, not a minimum.
+    if !(0...60).contains(config.panRate) || !config.panRate.isFinite {
+        out.panRate = config.panRate.isFinite ? min(max(config.panRate, 0), 60) : Config.fallback.panRate
+        warnings.append(ConfigWarning(key: "panRate", detail: "clamped to 0...60"))
     }
 
     if !(1...65535).contains(config.obs.port) {

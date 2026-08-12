@@ -314,4 +314,11 @@ Established by inspection, not assumption:
 
    **Half answered: the transport is not the limit.** A transform round-trip runs a median 0.27ms against a 33ms budget, so if the motion looks stepped the cause is the tick cadence or the easing curve, not OBS. The `max 7.41ms` tail is why coalescing stays anyway — it is cheap, and a stall under load is exactly when a backlog would hurt.
 
+   **A third suspect is now gone, which changes what a "stepped" report means.**
+   The pan used to snap to the dead-zone edge, so the visible region moved at
+   exactly cursor speed — a hand that jerks produced a shot that jerked, and no
+   tick rate could smooth that. `panRate` now chases the target as
+   `1 - e^(-rate·dt)` [lookit-qbc]. If the motion still reads as uneven after
+   this, the cause is one of the two below and not the pan.
+
    **And a second suspect, found by the swap-R check rather than by eye.** The ease is smoothstep in *zoom*, but what the viewer sees is the visible region, which goes as `1 - 1/zoom`. That is concave, so the apparent motion is **front-loaded**: it lunges out of the start and crawls into the end, even though the zoom value itself is symmetric. If the motion reads as uneven rather than stepped, easing in log-zoom is the fix, not a faster tick. Left alone until [lookit-xm1] says whether it is visible.
