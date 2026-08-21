@@ -13,14 +13,14 @@ public final class TickLoop {
     /// Everything the loop needs from outside itself.
     public struct Environment {
         public var cursor: () -> ScreenPoint
-        public var locate: (WindowID) -> CaptureRect?
+        public var locate: (CaptureSource) -> CaptureRect?
         /// Monotonic seconds. A parameter so the ease can be stepped by hand.
         public var now: () -> Double
         public var send: (SetSceneItemTransformRequest) -> Void
 
         public init(
             cursor: @escaping () -> ScreenPoint,
-            locate: @escaping (WindowID) -> CaptureRect?,
+            locate: @escaping (CaptureSource) -> CaptureRect?,
             now: @escaping () -> Double,
             send: @escaping (SetSceneItemTransformRequest) -> Void
         ) {
@@ -36,15 +36,15 @@ public final class TickLoop {
         case running
         /// Back at rest with the ease finished — the caller should release.
         case settled
-        /// The window went away mid-session. Not an error: stop and re-resolve.
-        case windowGone
+        /// The source went away mid-session. Not an error: stop and re-resolve.
+        case sourceGone
         /// Nothing is held.
         case idle
     }
 
     private struct Held {
         let pristine: Pristine
-        let window: WindowID
+        let source: CaptureSource
         var center: SourcePoint
     }
 
@@ -84,12 +84,12 @@ public final class TickLoop {
     ///
     /// Eases from wherever the zoom actually is, never from the stop it was
     /// heading for, so pressing the key mid-animation does not snap backwards.
-    public func aim(at stop: Double, pristine: Pristine, window: WindowID) {
+    public func aim(at stop: Double, pristine: Pristine, source: CaptureSource) {
         if held == nil {
-            let source = pristine.transform.sourceSize ?? SourceSize(width: 0, height: 0)
+            let size = pristine.transform.sourceSize ?? SourceSize(width: 0, height: 0)
             held = Held(
-                pristine: pristine, window: window,
-                center: SourcePoint(x: source.width / 2, y: source.height / 2)
+                pristine: pristine, source: source,
+                center: SourcePoint(x: size.width / 2, y: size.height / 2)
             )
         }
         from = zoom
@@ -122,10 +122,10 @@ public final class TickLoop {
         let dt = min(max(now - (lastStepAt ?? now - 1.0 / 30), 1.0 / 480), 1.0 / 20)
         lastStepAt = now
 
-        // Re-read every tick: the window moves, and one that has gone — or
-        // whose id was recycled to another app — must stop the zoom rather than
-        // frame something else.
-        guard let rect = environment.locate(held.window) else { return .windowGone }
+        // Re-read every tick: a window moves, a display gets rearranged, and
+        // one that has gone — or whose id was recycled to another app — must
+        // stop the zoom rather than frame something else.
+        guard let rect = environment.locate(held.source) else { return .sourceGone }
 
         let framed = framing(
             cursor: environment.cursor(), rect: rect, source: source,

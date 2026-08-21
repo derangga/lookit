@@ -67,7 +67,7 @@ resolveTarget
   → pickCaptureItem              // pure
     ⚠ noCaptureInScene → escape: unresolved
     ⚠ ambiguous        → escape: picker
-  → locateWindow                 // boundary
+  → locateSource                 // boundary
     ⚠ windowNotFound   → escape: unresolved
 ```
 

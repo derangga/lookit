@@ -29,9 +29,9 @@ You need all of the following to run the app:
 | **macOS 13 or newer** | The app links AppKit and Carbon and is built against a recent SDK. It has been developed and verified on macOS 15.7.7. |
 | **OBS Studio 28 or newer** | OBS 28 was the first version to bundle `obs-websocket` version 5, which is the protocol lookit speaks. Development and verification were done against OBS 32.1.1 with `obs-websocket` 5.7.3. |
 | **The OBS WebSocket server turned on** | In OBS, open Tools, then WebSocket Server Settings, and tick Enable WebSocket server. Leave the port at 4455 unless you have a reason to change it. If a password is required, copy it, you will put it into the lookit config file. |
-| **A window capture or a screen capture in your scene** | lookit zooms a capture, so the current OBS scene needs at least one. If the scene has no capture at all, lookit says so and the hotkeys simply do nothing. |
+| **A window or display capture in your scene** | lookit zooms a capture, so the current OBS scene needs at least one. Application capture is the one flavour it cannot zoom, because it is not a single rectangle. If the scene has no capture at all, lookit says so and the hotkeys simply do nothing. |
 
-There is one thing worth calling out because it surprises people: **lookit needs no special macOS permissions.** It does not ask for Screen Recording access and it does not ask for Accessibility access. That is because it never reads the contents of your screen and never watches your keystrokes globally. It only reads the pointer position, asks the window server for the position and size of one window, and registers three ordinary system hotkeys. OBS is the program doing the actual capturing, so OBS is the program that holds the Screen Recording permission.
+There is one thing worth calling out because it surprises people: **lookit needs no special macOS permissions.** It does not ask for Screen Recording access and it does not ask for Accessibility access. That is because it never reads the contents of your screen and never watches your keystrokes globally. It only reads the pointer position, asks the window server for the position and size of one window or display, and registers three ordinary system hotkeys. OBS is the program doing the actual capturing, so OBS is the program that holds the Screen Recording permission.
 
 ### Installing and first run
 
@@ -102,7 +102,7 @@ main
     → pickCaptureItem                // pure, skips camera by kind
     → obs.getInputSettings
     → obs.getSceneItemTransform      // the candidate pristine, and the source size
-    → locateWindow                   // boundary
+    → locateSource                   // boundary
     → matchesSource                  // pure, is this really OBS's window?
   → installHotkeys
   → showHUD
@@ -121,7 +121,7 @@ Once you have zoomed in, a loop runs at thirty times a second for as long as the
 ```ts
 tick
   → readCursor
-  → locateWindow                     // re-read, the window may have moved
+  → locateSource                     // re-read, the window or display may have moved
   → mapCursorToSourcePixels          // pure
   → nextPanCenter                    // pure, dead zone
   → ease                             // pure

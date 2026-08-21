@@ -63,32 +63,50 @@ public enum DisconnectReason: Equatable, Sendable {
 
 // MARK: - Target
 
-/// A resolved Target: everything the tick loop needs except the window's current
+/// A resolved Target: everything the tick loop needs except the source's current
 /// position, which is deliberately absent because it is re-read every tick.
 public struct Target: Equatable, Sendable {
     public let scene: SceneName
     public let itemId: SceneItemId
     public let inputName: InputName
-    public let window: WindowID
+    public let source: CaptureSource
     /// The owner to validate the window id against, since ids are recycled.
+    /// Always nil for a display, which has no owner.
     public let bundleID: String?
     /// The framing as found at resolve time — the candidate Pristine.
     public let transform: Transform
 
     public init(
         scene: SceneName, itemId: SceneItemId, inputName: InputName,
-        window: WindowID, bundleID: String?, transform: Transform
+        source: CaptureSource, bundleID: String?, transform: Transform
     ) {
         self.scene = scene
         self.itemId = itemId
         self.inputName = inputName
-        self.window = window
+        self.source = source
         self.bundleID = bundleID
         self.transform = transform
     }
 
     public var pristine: Pristine {
         Pristine(scene: scene, itemId: itemId, inputName: inputName, transform: transform)
+    }
+}
+
+extension CaptureSource {
+    /// The window id, when there is one. A display has none, and that absence
+    /// is what switches off the owner check rather than a flag.
+    public var windowID: WindowID? {
+        if case let .window(id) = self { return id }
+        return nil
+    }
+
+    /// What to say when this source can no longer be located.
+    public var goneReason: UnresolvedReason {
+        switch self {
+        case .window: .windowGone
+        case .display: .displayGone
+        }
     }
 }
 
@@ -110,8 +128,12 @@ public enum UnresolvedReason: Equatable, Sendable {
     case ambiguous([InputName])
     /// The captured window is gone, or the id was recycled to another app.
     case windowGone
-    case displayCaptureUnsupported
+    /// The captured display has been unplugged or rearranged out of existence.
+    case displayGone
     case applicationCaptureUnsupported
+    /// A capture flavour lookit does not understand, carrying OBS's own number
+    /// so a bug report can say what it actually was.
+    case unsupported(type: Int?)
     /// OBS reported a source with no usable dimensions.
     case degenerateSource
     /// OBS refused a request while resolving — the scene or item changed under
@@ -125,8 +147,10 @@ public enum UnresolvedReason: Equatable, Sendable {
         case let .ambiguous(names):
             "Several captures in this scene: \(names.map(\.raw).joined(separator: ", "))"
         case .windowGone: "The captured window is gone — re-pick it in OBS"
-        case .displayCaptureUnsupported: "Display capture is not supported yet"
+        case .displayGone: "The captured display is gone — re-pick it in OBS"
         case .applicationCaptureUnsupported: "Application capture is not supported yet"
+        case let .unsupported(type):
+            "This capture type is not supported yet (type \(type.map(String.init) ?? "?"))"
         case .degenerateSource: "OBS reports no size for this source"
         case let .obsRefused(detail): "OBS refused: \(detail)"
         }
@@ -144,15 +168,10 @@ extension UnresolvedReason {
         }
     }
 
-    /// Bindings lookit cannot zoom map to a reason that says which, so the HUD
-    /// never has to show a bare failure.
-    public init?(unsupported binding: CaptureBinding) {
-        switch binding {
-        case .window: return nil
-        case .display: self = .displayCaptureUnsupported
-        case .unsupported(2): self = .applicationCaptureUnsupported
-        case .unsupported: self = .displayCaptureUnsupported
-        }
+    /// Capture flavours lookit cannot zoom map to a reason that says which, so
+    /// the HUD never has to show a bare failure.
+    public init(unsupported type: Int?) {
+        self = type == 2 ? .applicationCaptureUnsupported : .unsupported(type: type)
     }
 }
 

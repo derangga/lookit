@@ -65,8 +65,8 @@ main
     → obs.getInputSettings
     → captureBinding                 // pure
     → obs.getSceneItemTransform      // the candidate Pristine, and the source size
-    → locateWindow                   // boundary
-    → matchesSource                  // pure — is this really OBS's window?
+    → locateSource                   // boundary — window server or display list
+    → matchesSource                  // pure — is this really OBS's source?
   → installHotkeys
   → showHUD
   → startTick
@@ -77,7 +77,7 @@ main
 ```ts
 tick
   → readCursor
-  → locateWindow                     // re-read; the window may have moved
+  → locateSource                     // re-read; the window or display may have moved
   → mapCursorToSourcePixels          // pure
   → nextPanCenter                    // pure — dead zone
   → ease                             // pure
@@ -133,7 +133,7 @@ Most of the tick loop is pure. That is not aesthetic — it is what makes [ADR 0
 ```
 Stream:  obs.events · tick(30Hz) · hotkeys · configFileChanges
          previewFeed(2Hz, 8Hz for 1s after a reframe) — stopped while collapsed
-Effect:  connect · each request · locateWindow · journal read/write
+Effect:  connect · each request · locateSource · journal read/write
 Bounded: CaptureRect valid 1 tick · sceneItemList valid until scene change
          sceneList valid until SceneListChanged
 ```
@@ -195,7 +195,7 @@ E=ObsError        E=TargetError    E=(surfaced in HUD)
 
 ```
 zoomCrop, nextPanCenter, ease, pickCaptureItem, mapCursor   R = never
-locateWindow                                                R = WindowLocator
+locateSource                                                R = SourceLocator
 readCursor                                                  R = CursorSource
 tick                                                        R = Clock
 every obs.*                                                 R = OBSClient
@@ -261,14 +261,14 @@ The dirty target is a **resource**, not a state flag. That is [ADR 0002](./docs/
 // Production
 tick
   → CursorSource.live          → NSEvent.mouseLocation
-  → WindowLocator.live         → CGWindowListCopyWindowInfo
+  → SourceLocator.live         → CGWindowListCopyWindowInfo / CGDisplayBounds
   → Clock.live                 → 30Hz timer
   → OBSClient.live             → websocket
 
 // Tests
 tick
   → CursorSource.scripted      → [(0,0), (900,400), (2000,900)]
-  → WindowLocator.fixed        → 1470×956 @2x
+  → SourceLocator.fixed        → 1470×956 @2x
   → Clock.manual               → step() per assertion
   → OBSClient.recording        → captures transforms, asserts nothing
 ```
@@ -285,7 +285,7 @@ Established by inspection, not assumption:
 | OBS | 32.1.1, `obs-websocket` 5.7.3 bundled, port 4455, **enabled, auth required** — Hello/Identify handshake verified against the password in `config.json` |
 | `SetSceneItemTransform` round-trip | measured over 60 sends on loopback: **median 0.27ms, p90 0.57ms, max 7.41ms** — two orders of magnitude under a 33ms tick |
 | Canvas | 2992×1858 @ 30fps |
-| Captures | window capture (`screen_capture` type 1), not display capture |
+| Captures | window capture (`screen_capture` type 1) and display capture (type 0); application capture (type 2) has no single rect and stays unsupported |
 | TCC | **none required** — `RegisterEventHotKey`, `NSEvent.mouseLocation` and window *bounds* all need no permission |
 | Hotkeys | `⌘⌥=` / `⌘⌥-` / `⌘⌥0` free here (`closeViewHotkeysEnabled = 0`); these are the system zoom shortcuts on stock macOS |
 

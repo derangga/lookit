@@ -385,11 +385,32 @@ do {
 }
 
 do {
-    expect(WindowLocator.missing.locate(WindowID(1)) == nil, "the missing locator resolves nothing")
-    let fixed = WindowLocator.fixed(
+    expect(
+        SourceLocator.missing.locate(.window(WindowID(1))) == nil,
+        "the missing locator resolves nothing"
+    )
+    let fixed = SourceLocator.fixed(
         CaptureRect(x: 0, y: 0, width: 100, height: 100, scale: 2)
     )
-    expect(fixed.locate(WindowID(999))?.scale ?? 0, 2, "the fixed locator ignores the id")
+    expect(fixed.locate(.window(WindowID(999)))?.scale ?? 0, 2, "the fixed locator ignores the id")
+    expect(
+        fixed.locate(.display(uuid: "x"))?.scale ?? 0, 2, "and it ignores a display uuid the same way"
+    )
+
+    // A builtin retina at "looks like 1512x982": the mode's pixel width is what
+    // ScreenCaptureKit hands OBS, so that is the scale the crop must use.
+    let retina = captureRect(
+        fromDisplay: CGRect(x: 0, y: 0, width: 1512, height: 982), pointWidth: 1512, pixelWidth: 3024
+    )
+    expect(retina?.scale ?? 0, 2, "a display's scale comes from its mode")
+    expect(retina?.sourceSize.width ?? 0, 3024, "which makes the source size the captured pixels")
+    expect(retina?.x ?? -1, 0, "and the bounds are already top-left, so nothing is flipped")
+    expect(
+        captureRect(
+            fromDisplay: CGRect(x: 0, y: 0, width: 0, height: 982), pointWidth: 0, pixelWidth: 3024
+        ) == nil,
+        "a degenerate display is rejected before it can reach the core"
+    )
 }
 
 // MARK: - Keybinding boundary
@@ -576,6 +597,18 @@ do {
         display.map(captureBinding) == .display(uuid: "37D8"),
         "display capture is reported explicitly, not as a bare failure"
     )
+    expect(
+        decode(CaptureSettings.self, #"{"type":0}"#).map(captureBinding) == .unsupported(type: 0),
+        "a display capture with no uuid is unsupported rather than a broken display"
+    )
+    // What OBS 32.1.1 actually sends for a display capture: no type at all,
+    // because 0 is the default and OBS omits defaults. Missing this is what
+    // made display capture look unsupported when it was merely unparsed.
+    expect(
+        decode(CaptureSettings.self, #"{"display_uuid":"37D8"}"#)
+            .map(captureBinding) == .display(uuid: "37D8"),
+        "an absent type is a display, which is how OBS really sends one"
+    )
 
     let app = decode(CaptureSettings.self, #"{"type":2,"application":"com.apple.Safari"}"#)
     expect(
@@ -717,22 +750,18 @@ do {
     )
 
     expect(
-        UnresolvedReason(unsupported: .window(WindowID(1))) == nil,
-        "a window binding is not an unsupported reason"
-    )
-    expect(
-        UnresolvedReason(unsupported: .display(uuid: "x")) == .displayCaptureUnsupported,
-        "display capture says so specifically"
-    )
-    expect(
-        UnresolvedReason(unsupported: .unsupported(type: 2)) == .applicationCaptureUnsupported,
+        UnresolvedReason(unsupported: 2) == .applicationCaptureUnsupported,
         "application capture says so specifically"
+    )
+    expect(
+        UnresolvedReason(unsupported: 7) == .unsupported(type: 7),
+        "and anything else carries OBS's own number for the bug report"
     )
 
     // Every reason must be sayable to a human — a bare "unresolved" is useless.
     let reasons: [UnresolvedReason] = [
         .notConnected, .noCaptureInScene, .ambiguous([InputName("a")]), .windowGone,
-        .displayCaptureUnsupported, .applicationCaptureUnsupported, .degenerateSource,
+        .displayGone, .applicationCaptureUnsupported, .unsupported(type: 7), .degenerateSource,
     ]
     expect(reasons.allSatisfy { !$0.message.isEmpty }, "every unresolved reason has a message")
 }
@@ -740,7 +769,7 @@ do {
 do {
     let target = Target(
         scene: SceneName("Scene Browser"), itemId: SceneItemId(2),
-        inputName: InputName("chrome"), window: WindowID(384),
+        inputName: InputName("chrome"), source: .window(WindowID(384)),
         bundleID: "net.imput.helium", transform: sampleTransform
     )
     expect(TargetState.resolved(target).target == target, "a resolved state yields its target")
@@ -1358,7 +1387,7 @@ do {
     let resolved = TargetState.resolved(
         Target(
             scene: SceneName("Scene Browser"), itemId: SceneItemId(3),
-            inputName: InputName("chrome"), window: WindowID(384),
+            inputName: InputName("chrome"), source: .window(WindowID(384)),
             bundleID: "net.imput.helium", transform: sampleTransform
         )
     )
@@ -1474,7 +1503,7 @@ print("DirtyScope")
 do {
     let target = Target(
         scene: SceneName("Scene Browser"), itemId: SceneItemId(3),
-        inputName: InputName("chrome"), window: WindowID(46),
+        inputName: InputName("chrome"), source: .window(WindowID(46)),
         bundleID: "net.imput.helium", transform: sampleTransform
     )
     /// What the item looks like after lookit has cropped it. Journalling THIS
@@ -1483,7 +1512,7 @@ do {
     cropped.cropLeft = 400
     let zoomed = Target(
         scene: target.scene, itemId: target.itemId, inputName: target.inputName,
-        window: target.window, bundleID: target.bundleID, transform: cropped
+        source: target.source, bundleID: target.bundleID, transform: cropped
     )
 
     // Acquire journals first, then goes dirty.
@@ -1533,7 +1562,7 @@ do {
         _ = try scope.acquire(target)
         let other = Target(
             scene: SceneName("Scene Terminal"), itemId: SceneItemId(1),
-            inputName: InputName("terminal"), window: WindowID(49),
+            inputName: InputName("terminal"), source: .window(WindowID(49)),
             bundleID: "com.mitchellh.ghostty", transform: sampleTransform
         )
         do {
@@ -1732,7 +1761,7 @@ do {
 
     // Zoom in to 2x. The ease is 300ms, so ~9 frames at 30Hz.
     rig.cursor = ScreenPoint(x: 100 + 748, y: 60 + 464)   // dead centre
-    loop.aim(at: 2, pristine: pristine, window: WindowID(46))
+    loop.aim(at: 2, pristine: pristine, source: .window(WindowID(46)))
 
     var outcomes: [TickLoop.Outcome] = []
     var zooms: [Double] = []
@@ -1785,13 +1814,13 @@ do {
 
     // The window goes away mid-session.
     rig.window = nil
-    expect(rig.frame(loop) == .windowGone, "a vanished window stops the loop")
+    expect(rig.frame(loop) == .sourceGone, "a vanished window stops the loop")
 
     // Zoom back out. The last frame must land at rest before settling, or the
     // shot would be left a fraction short of where it belongs.
     rig.window = CaptureRect(x: 100, y: 60, width: 1496, height: 929, scale: 2)
     rig.sent.removeAll()
-    loop.aim(at: 1, pristine: pristine, window: WindowID(46))
+    loop.aim(at: 1, pristine: pristine, source: .window(WindowID(46)))
     var settled = false
     for _ in 0..<12 where !settled {
         settled = rig.frame(loop) == .settled

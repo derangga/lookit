@@ -311,6 +311,13 @@ public func obsEvent(in data: Data) -> ObsEvent? {
 
 // MARK: - What is being captured
 
+/// What a capture lookit *can* zoom is bound to — `CaptureBinding` minus the
+/// flavours it cannot, so a `Target` is unable to hold one of those.
+public enum CaptureSource: Equatable, Sendable {
+    case window(WindowID)
+    case display(uuid: String)
+}
+
 public enum CaptureBinding: Equatable, Sendable {
     /// A specific window, and the id is all OBS reliably knows about it.
     ///
@@ -320,8 +327,8 @@ public enum CaptureBinding: Equatable, Sendable {
     /// the owner against it would reject the correct window forever. The owner
     /// to check comes from the window server instead — see `windowOwner`.
     case window(WindowID)
-    /// A whole display. Not zoomable yet — reported explicitly so the HUD can
-    /// say why rather than showing a bare "unresolved".
+    /// A whole display, named by the UUID OBS saved. Unlike a window id this
+    /// is never recycled, so it needs no owner check.
     case display(uuid: String)
     /// Something lookit does not understand, carrying the raw value so a bug
     /// report can say what it actually was.
@@ -329,8 +336,13 @@ public enum CaptureBinding: Equatable, Sendable {
 }
 
 /// OBS's macOS screen capture uses `type` 0 = display, 1 = window, 2 = application.
+///
+/// The field is **absent** for a display capture: OBS omits any setting still at
+/// its default, and 0 is the default. Measured against 32.1.1 — a display
+/// capture of the builtin panel sends `{"display_uuid": "37D8…"}` and nothing
+/// else. So a missing type is a display, not a mystery.
 public func captureBinding(from settings: CaptureSettings) -> CaptureBinding {
-    switch settings.type {
+    switch settings.type ?? 0 {
     case 1:
         guard let window = settings.window else { return .unsupported(type: settings.type) }
         return .window(WindowID(window))

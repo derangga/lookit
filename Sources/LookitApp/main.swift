@@ -116,11 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func resolve() async {
         guard let connection else { return }
         target = await resolveTarget(
-            connection: connection, locate: WindowLocator.unverified.locate, owner: windowOwner,
+            connection: connection, locate: SourceLocator.unverified.locate, owner: windowOwner,
             preferring: { [weak self] scene in self?.preferred[scene] }
         )
         let described = switch target {
-        case let .resolved(t): "target \(t.inputName.raw) #\(t.itemId.raw) window \(t.window.raw) \(t.bundleID ?? "?")"
+        case let .resolved(t): "target \(t.inputName.raw) #\(t.itemId.raw) \(t.source) \(t.bundleID ?? "?")"
         case let .unresolved(reason): "no target — \(reason.message)"
         case nil: "no target"
         }
@@ -424,7 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let loop = self.loop ?? makeLoop()
         self.loop = loop
-        loop.aim(at: next, pristine: pristine, window: target.window)
+        loop.aim(at: next, pristine: pristine, source: target.source)
         zoom = next
         // The commanded stop, not the eased value the tick loop is passing
         // through. The HUD used to be fed `loop.zoom` every frame, which is
@@ -440,7 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return TickLoop(
             environment: TickLoop.Environment(
                 cursor: cursorPosition,
-                locate: WindowLocator.live(expecting: expecting).locate,
+                locate: SourceLocator.live(expecting: expecting).locate,
                 now: { Date().timeIntervalSinceReferenceDate },
                 send: { [weak self] request in self?.sender?.post(request) }
             ),
@@ -481,8 +481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             break
         case .settled:
             settle()
-        case .windowGone:
-            target = .unresolved(.windowGone)
+        case .sourceGone:
+            target = .unresolved(target?.target?.source.goneReason ?? .windowGone)
             settle()
         case .idle:
             stopTicking()

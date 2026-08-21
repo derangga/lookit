@@ -51,7 +51,7 @@ _Avoid_: Threshold, margin, deadband
 The state of a Target that holds its Visible region because the cursor has left the Capture rectangle. Zoom level is unaffected.
 
 **Unresolved**:
-The state of a Target whose Capture rectangle cannot be located, because the window it captures no longer exists. Zooming is refused rather than applied blindly.
+The state of a Target whose Capture rectangle cannot be located, because the window or display it captures no longer exists. Zooming is refused rather than applied blindly.
 
 ### Safety
 

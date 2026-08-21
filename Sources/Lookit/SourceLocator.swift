@@ -1,21 +1,21 @@
-// §6 Boundary: CGWindowList dict -> CaptureRect.
+// §6 Boundary: the window server / display list -> CaptureRect.
 //
-// R = WindowLocator. A struct of closures rather than a protocol, so tests swap
+// R = SourceLocator. A struct of closures rather than a protocol, so tests swap
 // the implementation without a second conforming type existing (DESIGN.md §9).
 
 import AppKit
 import LookitCore
 
-public struct WindowLocator: Sendable {
-    public var locate: @Sendable (WindowID) -> CaptureRect?
+public struct SourceLocator: Sendable {
+    public var locate: @Sendable (CaptureSource) -> CaptureRect?
 
-    public init(locate: @escaping @Sendable (WindowID) -> CaptureRect?) {
+    public init(locate: @escaping @Sendable (CaptureSource) -> CaptureRect?) {
         self.locate = locate
     }
 }
 
-extension WindowLocator {
-    /// Asks the window server where a window is, every tick.
+extension SourceLocator {
+    /// Asks the system where the captured source is, every tick.
     ///
     /// Needs no TCC permission: only window *titles* are withheld without
     /// Screen Recording, and bounds are not a title.
@@ -27,31 +27,87 @@ extension WindowLocator {
     ///   id alone can resolve to a different app's window and lookit would
     ///   frame the wrong thing silently. Passing nil skips the check and
     ///   accepts that risk; only do so when the id was resolved moments ago.
-    public static func live(expecting bundleID: String?) -> WindowLocator {
-        WindowLocator { id in
-            guard
-                let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, id.raw)
-                    as? [[String: Any]],
-                let info = infos.first,
-                let bounds = info[kCGWindowBounds as String] as? [String: Any],
-                ownerMatches(info, expected: bundleID, resolveBundleID: bundleID(forPID:))
-            else { return nil }
-
-            return captureRect(fromBounds: bounds, scale: backingScale(forBounds: bounds))
+    ///   Ignored for a display, which has no owner.
+    public static func live(expecting bundleID: String?) -> SourceLocator {
+        SourceLocator { source in
+            switch source {
+            case let .window(id): windowRect(id, expecting: bundleID)
+            case let .display(uuid): displayRect(uuid: uuid)
+            }
         }
     }
 
-    /// A window that is always exactly here. For tests and for reasoning about
+    /// A source that is always exactly here. For tests and for reasoning about
     /// the tick loop without a window server.
-    public static func fixed(_ rect: CaptureRect) -> WindowLocator {
-        WindowLocator { _ in rect }
+    public static func fixed(_ rect: CaptureRect) -> SourceLocator {
+        SourceLocator { _ in rect }
     }
 
-    /// A window that no longer exists — drives the Unresolved path.
-    public static let missing = WindowLocator { _ in nil }
+    /// A source that no longer exists — drives the Unresolved path.
+    public static let missing = SourceLocator { _ in nil }
+}
+
+// MARK: - Locating
+
+/// Where a window is now, or nil if it is gone or was recycled to another app.
+func windowRect(_ id: WindowID, expecting bundleID: String?) -> CaptureRect? {
+    guard
+        let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, id.raw) as? [[String: Any]],
+        let info = infos.first,
+        let bounds = info[kCGWindowBounds as String] as? [String: Any],
+        ownerMatches(info, expected: bundleID, resolveBundleID: bundleID(forPID:))
+    else { return nil }
+
+    return captureRect(fromBounds: bounds, scale: backingScale(forBounds: bounds))
+}
+
+/// Where the display OBS saved is now, or nil if it has been unplugged.
+///
+/// No owner check and no recycling worry: a display UUID names the same panel
+/// for as long as it is attached. The rect still moves, because rearranging
+/// displays moves everything but the primary.
+func displayRect(uuid: String) -> CaptureRect? {
+    guard let wanted = CFUUIDCreateFromString(nil, uuid as CFString) else { return nil }
+
+    var count: UInt32 = 0
+    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return nil }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return nil }
+
+    guard
+        let id = ids.first(where: {
+            CGDisplayCreateUUIDFromDisplayID($0)?.takeRetainedValue() == wanted
+        }),
+        let mode = CGDisplayCopyDisplayMode(id)
+    else { return nil }
+
+    return captureRect(
+        fromDisplay: CGDisplayBounds(id), pointWidth: mode.width, pixelWidth: mode.pixelWidth
+    )
 }
 
 // MARK: - Parsing
+
+/// `CGDisplayBounds` -> `CaptureRect`.
+///
+/// Already global top-left points, the same convention `kCGWindowBounds` uses,
+/// so nothing is flipped here either.
+///
+/// The scale comes from the *mode* rather than from `NSScreen`: a "more space"
+/// scaled mode renders above the panel's native size, and it is that rendered
+/// size ScreenCaptureKit hands OBS. `backingScaleFactor` would report 2 and the
+/// crop would land in the wrong place.
+public func captureRect(fromDisplay bounds: CGRect, pointWidth: Int, pixelWidth: Int)
+    -> CaptureRect?
+{
+    guard bounds.width > 0, bounds.height > 0, pointWidth > 0, pixelWidth > 0 else { return nil }
+
+    return CaptureRect(
+        x: bounds.origin.x, y: bounds.origin.y,
+        width: bounds.width, height: bounds.height,
+        scale: Double(pixelWidth) / Double(pointWidth)
+    )
+}
 
 /// `kCGWindowBounds` -> `CaptureRect`.
 ///

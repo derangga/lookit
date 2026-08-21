@@ -18,7 +18,7 @@ import LookitCore
 @MainActor
 public func resolveTarget(
     connection: OBSConnection,
-    locate: (WindowID) -> CaptureRect?,
+    locate: (CaptureSource) -> CaptureRect?,
     owner: (WindowID) -> String?,
     preferring: (SceneName) -> InputName? = { _ in nil }
 ) async -> TargetState {
@@ -37,11 +37,12 @@ public func resolveTarget(
         let input = try await connection.call(
             "GetInputSettings", InputRequest(item.inputName), as: InputSettingsResponse.self
         )
-        let binding = captureBinding(from: input.inputSettings)
-        if let unsupported = UnresolvedReason(unsupported: binding) {
-            return .unresolved(unsupported)
+        let source: CaptureSource
+        switch captureBinding(from: input.inputSettings) {
+        case let .window(window): source = .window(window)
+        case let .display(uuid): source = .display(uuid: uuid)
+        case let .unsupported(type): return .unresolved(UnresolvedReason(unsupported: type))
         }
-        guard case let .window(window) = binding else { return .unresolved(.windowGone) }
 
         let transform = try await connection.call(
             "GetSceneItemTransform", SceneItemRequest(scene: scene, itemId: item.id),
@@ -51,21 +52,22 @@ public func resolveTarget(
         // OBS answers 0x0 for a capture whose window has gone, which is the
         // cheapest possible proof that the binding is dead — no window server
         // lookup needed to know it.
-        guard let source = transform.sourceSize else { return .unresolved(.degenerateSource) }
+        guard let sourceSize = transform.sourceSize else { return .unresolved(.degenerateSource) }
 
-        // The id came out of OBS's saved settings and can be stale, so it is
-        // not trusted until the window it names is the size OBS says it is
-        // capturing.
-        guard let rect = locate(window), matchesSource(rect, source) else {
-            return .unresolved(.windowGone)
+        // What OBS saved came out of a config file and can be stale, so it is
+        // not trusted until the thing it names is the size OBS says it is
+        // capturing. For a display that comparison also proves the scale, which
+        // is the only part of the display path that can be silently wrong.
+        guard let rect = locate(source), matchesSource(rect, sourceSize) else {
+            return .unresolved(source.goneReason)
         }
 
         return .resolved(
             Target(
                 scene: scene, itemId: item.id, inputName: item.inputName,
-                window: window,
+                source: source,
                 // From the window server, never from OBS's `application`.
-                bundleID: owner(window),
+                bundleID: source.windowID.flatMap(owner),
                 transform: transform
             )
         )
@@ -95,8 +97,8 @@ extension UnresolvedReason {
     }
 }
 
-extension WindowLocator {
+extension SourceLocator {
     /// The locator resolve uses: the id has not been validated yet, so there is
     /// no owner to expect.
-    public static var unverified: WindowLocator { .live(expecting: nil) }
+    public static var unverified: SourceLocator { .live(expecting: nil) }
 }
